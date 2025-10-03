@@ -1,0 +1,13 @@
+*.fasl
+*.o
+*.so
+*.dylib
+*.bundle
+*.FASL
+*.fasl
+*.lisp-temp
+*~
+.DS_Store
+
+.qlot/
+qlfile.lock
