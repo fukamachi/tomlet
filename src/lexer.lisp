@@ -1,7 +1,7 @@
-(defpackage #:tomlex/lexer
+(defpackage #:tomlet/lexer
   (:use #:cl)
   (:local-nicknames
-   (#:types #:tomlex/types))
+   (#:types #:tomlet/types))
   (:export #:token
            #:make-token
            #:token-type
@@ -10,7 +10,7 @@
            #:token-column
            #:lex
            #:lex-string))
-(in-package #:tomlex/lexer)
+(in-package #:tomlet/lexer)
 
 ;;; Token Types
 ;;;

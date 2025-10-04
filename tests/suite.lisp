@@ -1,17 +1,17 @@
-(defpackage #:tomlex/tests
+(defpackage #:tomlet/tests
   (:use #:cl
         #:rove))
-(in-package #:tomlex/tests)
+(in-package #:tomlet/tests)
 
 ;;; ===========================================================================
 ;;; Official TOML Test Suite Integration
 ;;; ===========================================================================
 
 (defparameter *test-dir*
-  (asdf:system-relative-pathname :tomlex "tests/toml-test/tests/"))
+  (asdf:system-relative-pathname :tomlet "tests/toml-test/tests/"))
 
 (defparameter *toml-1.0.0-files*
-  (asdf:system-relative-pathname :tomlex "tests/toml-test/tests/files-toml-1.0.0"))
+  (asdf:system-relative-pathname :tomlet "tests/toml-test/tests/files-toml-1.0.0"))
 
 (defun read-test-file-list ()
   "Read the list of TOML 1.0.0 test files."
@@ -55,13 +55,13 @@
     (:bool
      (eq (string= expected "true") actual))
     (:datetime
-     (typep actual 'tomlex/types:offset-datetime))
+     (typep actual 'tomlet/types:offset-datetime))
     (:datetime-local
-     (typep actual 'tomlex/types:local-datetime))
+     (typep actual 'tomlet/types:local-datetime))
     (:date-local
-     (typep actual 'tomlex/types:local-date))
+     (typep actual 'tomlet/types:local-date))
     (:time-local
-     (typep actual 'tomlex/types:local-time))))
+     (typep actual 'tomlet/types:local-time))))
 
 (defun compare-toml-structures (expected actual)
   "Recursively compare expected JSON structure with actual parsed TOML."
@@ -133,7 +133,7 @@
          (expected-json (com.inuoe.jzon:parse (uiop:read-file-string json-file)))
          (expected (json-to-toml-expected expected-json)))
     (handler-case
-        (let ((actual (tomlex:parse toml-content)))
+        (let ((actual (tomlet:parse toml-content)))
           (unless (compare-toml-structures expected actual)
             (error "Mismatch: expected ~S, got ~S" expected actual)))
       (error (e)
@@ -145,9 +145,9 @@
          (toml-content (uiop:read-file-string toml-file)))
     (handler-case
         (progn
-          (tomlex:parse toml-content)
+          (tomlet:parse toml-content)
           (error "Test ~A should have failed but didn't" test-path))
-      (tomlex:toml-error () t)
+      (tomlet:toml-error () t)
       (error (e)
         ;; Some other error - this counts as rejecting invalid input
         (declare (ignore e))
@@ -203,21 +203,21 @@
 
 (deftest test-boolean-values
   (testing "Boolean true"
-    (let ((result (tomlex:parse "key = true")))
+    (let ((result (tomlet:parse "key = true")))
       (ok (hash-table-p result))
       (ok (eq (gethash "key" result) t))))
 
   (testing "Boolean false"
-    (let ((result (tomlex:parse "key = false")))
+    (let ((result (tomlet:parse "key = false")))
       (ok (hash-table-p result))
       (ok (eq (gethash "key" result) nil)))))
 
 (deftest test-integer-basic
   (testing "Simple integer"
-    (let ((result (tomlex:parse "answer = 42")))
+    (let ((result (tomlet:parse "answer = 42")))
       (ok (= (gethash "answer" result) 42)))))
 
 (deftest test-string-basic
   (testing "Simple string"
-    (let ((result (tomlex:parse "key = \"value\"")))
+    (let ((result (tomlet:parse "key = \"value\"")))
       (ok (string= (gethash "key" result) "value")))))

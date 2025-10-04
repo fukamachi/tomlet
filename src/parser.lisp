@@ -1,9 +1,9 @@
-(defpackage #:tomlex
+(defpackage #:tomlet
   (:use #:cl)
   (:local-nicknames
-   (#:types #:tomlex/types)
-   (#:lexer #:tomlex/lexer))
-  (:import-from #:tomlex/types
+   (#:types #:tomlet/types)
+   (#:lexer #:tomlet/lexer))
+  (:import-from #:tomlet/types
                 #:toml-error
                 #:toml-error-message
                 #:toml-parse-error
@@ -77,7 +77,7 @@
            #:offset-datetime-second
            #:offset-datetime-nanosecond
            #:offset-datetime-offset))
-(in-package #:tomlex)
+(in-package #:tomlet)
 
 ;;; Parser State
 
@@ -480,6 +480,9 @@
 (defun parse (string)
   "Parse a TOML v1.0.0 string and return a hash table."
   (check-type string string)
+  ;; Note: UTF-8 validation happens at the file reading layer in SBCL.
+  ;; Invalid UTF-8 byte sequences cause stream decoding errors before
+  ;; the string reaches this function, so no additional validation is needed.
   (let* ((tokens (lexer:lex string))
          (state (make-parser-state :tokens tokens)))
     ;; Parse document

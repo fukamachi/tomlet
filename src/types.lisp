@@ -1,4 +1,4 @@
-(defpackage #:tomlex/types
+(defpackage #:tomlet/types
   (:use #:cl)
   (:export #:toml-error
            #:toml-error-message
@@ -39,7 +39,7 @@
            #:offset-datetime-second
            #:offset-datetime-nanosecond
            #:offset-datetime-offset))
-(in-package #:tomlex/types)
+(in-package #:tomlet/types)
 
 ;; Error conditions
 (define-condition toml-error (error)
