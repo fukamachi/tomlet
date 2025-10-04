@@ -314,6 +314,11 @@
                          :message "Unexpected float value as key")))
          (advance-token state)))
 
+      ;; Integer/float as bare key (unquoted numbers like "1", "3.14")
+      ((member (lexer:token-type token) '(:integer :float :datetime))
+       (prog1 (format nil "~A" (lexer:token-value token))
+         (advance-token state)))
+
       (t
        (error 'types:toml-parse-error
               :message (format nil "Expected key but got ~A" (lexer:token-type token))
@@ -494,8 +499,8 @@
                  (set-current-array-table state key-path)
                  (set-current-table state key-path))))
 
-          ;; Key-value pair (including keywords like inf, nan, true, false as keys)
-          ((member (lexer:token-type token) '(:bare-key :string :boolean :float))
+          ;; Key-value pair (including keywords, numbers, datetimes as keys)
+          ((member (lexer:token-type token) '(:bare-key :string :boolean :float :integer :datetime))
            (parse-key-value state))
 
           (t
