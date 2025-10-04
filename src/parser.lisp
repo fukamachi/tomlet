@@ -201,13 +201,21 @@
 
     ;; Parse key-value pairs
     (loop
-      (let ((key (parse-key state)))
+      (let ((key-path (parse-dotted-key state)))
         (expect-token state :equals)
         (let ((value (parse-value state)))
-          (when (nth-value 1 (gethash key table))
-            (error 'types:toml-parse-error
-                   :message (format nil "Duplicate key in inline table: ~A" key)))
-          (setf (gethash key table) value)))
+          (if (= (length key-path) 1)
+              ;; Simple key
+              (let ((key (first key-path)))
+                (when (nth-value 1 (gethash key table))
+                  (error 'types:toml-parse-error
+                         :message (format nil "Duplicate key in inline table: ~A" key)))
+                (setf (gethash key table) value))
+              ;; Dotted key - create nested tables
+              (let* ((parent-keys (butlast key-path))
+                     (final-key (car (last key-path)))
+                     (parent-table (get-or-create-table table parent-keys)))
+                (setf (gethash final-key parent-table) value)))))
 
       (let ((token (current-token state)))
         (unless token
