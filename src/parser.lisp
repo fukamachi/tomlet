@@ -187,6 +187,50 @@
     ;; Return as vector (reversed since we pushed)
     (coerce (nreverse elements) 'vector)))
 
+(defun parse-inline-table (state)
+  "Parse an inline table {key = value, ...}"
+  (expect-token state :left-brace)
+  (let ((table (make-hash-table :test 'equal)))
+    ;; Empty inline table check
+    (when (and (current-token state)
+               (eq (lexer:token-type (current-token state)) :right-brace))
+      (advance-token state)
+      (return-from parse-inline-table table))
+
+    ;; Parse key-value pairs
+    (loop
+      (let ((key (parse-key state)))
+        (expect-token state :equals)
+        (let ((value (parse-value state)))
+          (when (nth-value 1 (gethash key table))
+            (error 'types:toml-parse-error
+                   :message (format nil "Duplicate key in inline table: ~A" key)))
+          (setf (gethash key table) value)))
+
+      (let ((token (current-token state)))
+        (unless token
+          (error 'types:toml-parse-error
+                 :message "Unterminated inline table"))
+
+        (cond
+          ;; End of inline table
+          ((eq (lexer:token-type token) :right-brace)
+           (advance-token state)
+           (return))
+
+          ;; Comma - continue to next pair
+          ((eq (lexer:token-type token) :comma)
+           (advance-token state))
+
+          (t
+           (error 'types:toml-parse-error
+                  :message (format nil "Expected comma or } in inline table but got ~A"
+                                   (lexer:token-type token))
+                  :line (lexer:token-line token)
+                  :column (lexer:token-column token))))))
+
+    table))
+
 (defun parse-value (state)
   "Parse a value from current token"
   (let ((token (current-token state)))
@@ -198,6 +242,10 @@
       ;; Array
       (:left-bracket
        (parse-array state))
+
+      ;; Inline table
+      (:left-brace
+       (parse-inline-table state))
 
       ;; Simple values
       ((:boolean :integer :float :string)
@@ -235,13 +283,73 @@
     (prog1 (lexer:token-value token)
       (advance-token state))))
 
+(defun parse-dotted-key (state)
+  "Parse a dotted key (a.b.c) and return a list of key parts"
+  (let ((keys (list (parse-key state))))
+    (loop while (and (current-token state)
+                     (eq (lexer:token-type (current-token state)) :dot))
+          do (advance-token state)  ; skip dot
+             (push (parse-key state) keys))
+    (nreverse keys)))
+
+(defun get-or-create-table (table key-path)
+  "Navigate/create nested tables for a dotted key path"
+  (if (null key-path)
+      table
+      (let* ((key (first key-path))
+             (existing (gethash key table)))
+        (cond
+          ;; Key exists and is a hash table - continue navigation
+          ((hash-table-p existing)
+           (get-or-create-table existing (rest key-path)))
+
+          ;; Key doesn't exist - create new table
+          ((null existing)
+           (let ((new-table (make-hash-table :test 'equal)))
+             (setf (gethash key table) new-table)
+             (get-or-create-table new-table (rest key-path))))
+
+          ;; Key exists but isn't a table - error
+          (t
+           (error 'types:toml-parse-error
+                  :message (format nil "Cannot redefine key ~A as table" key)))))))
+
 (defun parse-key-value (state)
-  "Parse a key = value line"
-  (let ((key (parse-key state)))
+  "Parse a key = value line (supports dotted keys)"
+  (let ((key-path (parse-dotted-key state)))
     (expect-token state :equals)
-    (let ((value (parse-value state)))
-      ;; Store in result hash table
-      (setf (gethash key (parser-state-result state)) value))))
+    (let ((value (parse-value state))
+          (current-table (get-current-table state)))
+      (if (= (length key-path) 1)
+          ;; Simple key - assign to current table
+          (setf (gethash (first key-path) current-table) value)
+          ;; Dotted key - navigate from current table and set final key
+          (let* ((parent-keys (butlast key-path))
+                 (final-key (car (last key-path)))
+                 (parent-table (get-or-create-table current-table parent-keys)))
+            (setf (gethash final-key parent-table) value))))))
+
+;;; Table Section Parsing
+
+(defun parse-table-header (state)
+  "Parse a table header [section.name] and return the key path"
+  (expect-token state :left-bracket)
+  (let ((key-path (parse-dotted-key state)))
+    (expect-token state :right-bracket)
+    key-path))
+
+(defun set-current-table (state key-path)
+  "Set the current table context for subsequent key-value pairs"
+  (setf (parser-state-current-table-path state) key-path)
+  ;; Ensure the table exists
+  (get-or-create-table (parser-state-result state) key-path))
+
+(defun get-current-table (state)
+  "Get the current table for key-value assignments"
+  (if (null (parser-state-current-table-path state))
+      (parser-state-result state)
+      (get-or-create-table (parser-state-result state)
+                           (parser-state-current-table-path state))))
 
 ;;; Main Parser Entry Points
 
@@ -250,7 +358,7 @@
   (check-type string string)
   (let* ((tokens (lexer:lex string))
          (state (make-parser-state :tokens tokens)))
-    ;; Parse all key-value pairs
+    ;; Parse document
     (loop
       (skip-newlines state)
       (let ((token (current-token state)))
@@ -258,10 +366,16 @@
           (return))
         (when (eq (lexer:token-type token) :eof)
           (return))
-        ;; For now, only handle simple key-value pairs
         (cond
+          ;; Table header [section]
+          ((eq (lexer:token-type token) :left-bracket)
+           (let ((key-path (parse-table-header state)))
+             (set-current-table state key-path)))
+
+          ;; Key-value pair
           ((member (lexer:token-type token) '(:bare-key :string))
            (parse-key-value state))
+
           (t
            (error 'types:toml-parse-error
                   :message (format nil "Unexpected token: ~A" (lexer:token-type token))

@@ -290,3 +290,103 @@
       (let ((arr (gethash "single" result)))
         (ok (= (length arr) 1))
         (ok (= (aref arr 0) 42))))))
+
+(deftest test-inline-table-empty
+  (testing "Empty inline table"
+    (let ((result (tomlex:parse "empty = {}")))
+      (ok (hash-table-p (gethash "empty" result)))
+      (ok (= (hash-table-count (gethash "empty" result)) 0)))))
+
+(deftest test-inline-table-basic
+  (testing "Simple inline table"
+    (let ((result (tomlex:parse "point = {x = 1, y = 2}")))
+      (let ((table (gethash "point" result)))
+        (ok (hash-table-p table))
+        (ok (= (gethash "x" table) 1))
+        (ok (= (gethash "y" table) 2)))))
+
+  (testing "Inline table with strings"
+    (let ((result (tomlex:parse "person = {name = \"Alice\", age = 30}")))
+      (let ((table (gethash "person" result)))
+        (ok (string= (gethash "name" table) "Alice"))
+        (ok (= (gethash "age" table) 30))))))
+
+(deftest test-inline-table-mixed-values
+  (testing "Inline table with mixed value types"
+    (let ((result (tomlex:parse "config = {enabled = true, port = 8080, host = \"localhost\"}")))
+      (let ((table (gethash "config" result)))
+        (ok (eq (gethash "enabled" table) t))
+        (ok (= (gethash "port" table) 8080))
+        (ok (string= (gethash "host" table) "localhost"))))))
+
+(deftest test-inline-table-nested
+  (testing "Inline table with nested inline table"
+    (let ((result (tomlex:parse "outer = {inner = {x = 1}}")))
+      (let ((outer (gethash "outer" result)))
+        (ok (hash-table-p outer))
+        (let ((inner (gethash "inner" outer)))
+          (ok (hash-table-p inner))
+          (ok (= (gethash "x" inner) 1)))))))
+
+(deftest test-inline-table-with-array
+  (testing "Inline table with array value"
+    (let ((result (tomlex:parse "data = {values = [1, 2, 3]}")))
+      (let ((table (gethash "data" result)))
+        (let ((arr (gethash "values" table)))
+          (ok (vectorp arr))
+          (ok (= (length arr) 3))
+          (ok (= (aref arr 0) 1))
+          (ok (= (aref arr 1) 2))
+          (ok (= (aref arr 2) 3)))))))
+
+(deftest test-inline-table-single-pair
+  (testing "Inline table with single key-value pair"
+    (let ((result (tomlex:parse "single = {key = \"value\"}")))
+      (let ((table (gethash "single" result)))
+        (ok (= (hash-table-count table) 1))
+        (ok (string= (gethash "key" table) "value"))))))
+
+(deftest test-dotted-keys
+  (testing "Simple dotted key"
+    (let ((result (tomlex:parse "a.b = 1")))
+      (ok (hash-table-p (gethash "a" result)))
+      (ok (= (gethash "b" (gethash "a" result)) 1))))
+
+  (testing "Nested dotted keys"
+    (let ((result (tomlex:parse "a.b.c = 2")))
+      (ok (hash-table-p (gethash "a" result)))
+      (let ((b-table (gethash "b" (gethash "a" result))))
+        (ok (hash-table-p b-table))
+        (ok (= (gethash "c" b-table) 2)))))
+
+  (testing "Multiple dotted keys sharing prefix"
+    (let ((result (tomlex:parse (format nil "a.b = 1~%a.c = 2"))))
+      (let ((a-table (gethash "a" result)))
+        (ok (= (gethash "b" a-table) 1))
+        (ok (= (gethash "c" a-table) 2))))))
+
+(deftest test-table-sections
+  (testing "Simple table section"
+    (let ((result (tomlex:parse (format nil "[section]~%key = 1"))))
+      (ok (hash-table-p (gethash "section" result)))
+      (ok (= (gethash "key" (gethash "section" result)) 1))))
+
+  (testing "Multiple table sections"
+    (let ((result (tomlex:parse (format nil "[section1]~%a = 1~%[section2]~%b = 2"))))
+      (ok (= (gethash "a" (gethash "section1" result)) 1))
+      (ok (= (gethash "b" (gethash "section2" result)) 2))))
+
+  (testing "Nested table sections"
+    (let ((result (tomlex:parse (format nil "[a.b]~%c = 3"))))
+      (ok (hash-table-p (gethash "a" result)))
+      (let ((b-table (gethash "b" (gethash "a" result))))
+        (ok (hash-table-p b-table))
+        (ok (= (gethash "c" b-table) 3)))))
+
+  (testing "Table section with dotted keys"
+    (let ((result (tomlex:parse (format nil "[section]~%a.b = 1"))))
+      (let ((section (gethash "section" result)))
+        (ok (hash-table-p section))
+        (let ((a-table (gethash "a" section)))
+          (ok (hash-table-p a-table))
+          (ok (= (gethash "b" a-table) 1)))))))
