@@ -208,11 +208,54 @@
 
   (testing "Positive integer with sign"
     (let ((tokens (lexer:lex "+42")))
-      (ok (eq (lexer:token-type (first tokens)) :integer))))
+      (ok (eq (lexer:token-type (first tokens)) :integer))
+      (ok (= (lexer:token-value (first tokens)) 42))))
 
   (testing "Negative integer"
     (let ((tokens (lexer:lex "-42")))
-      (ok (eq (lexer:token-type (first tokens)) :integer)))))
+      (ok (eq (lexer:token-type (first tokens)) :integer))
+      (ok (= (lexer:token-value (first tokens)) -42))))
+
+  (testing "Integer with underscores"
+    (let ((tokens (lexer:lex "1_000_000")))
+      (ok (eq (lexer:token-type (first tokens)) :integer))
+      (ok (= (lexer:token-value (first tokens)) 1000000))))
+
+  (testing "Hex integer"
+    (let ((tokens (lexer:lex "0xFF")))
+      (ok (eq (lexer:token-type (first tokens)) :integer))
+      (ok (= (lexer:token-value (first tokens)) 255))))
+
+  (testing "Octal integer"
+    (let ((tokens (lexer:lex "0o77")))
+      (ok (eq (lexer:token-type (first tokens)) :integer))
+      (ok (= (lexer:token-value (first tokens)) 63))))
+
+  (testing "Binary integer"
+    (let ((tokens (lexer:lex "0b1010")))
+      (ok (eq (lexer:token-type (first tokens)) :integer))
+      (ok (= (lexer:token-value (first tokens)) 10)))))
+
+(deftest test-floats
+  (testing "Simple float"
+    (let ((tokens (lexer:lex "3.14")))
+      (ok (eq (lexer:token-type (first tokens)) :float))
+      (ok (< (abs (- (lexer:token-value (first tokens)) 3.14d0)) 0.001d0))))
+
+  (testing "Float with exponent"
+    (let ((tokens (lexer:lex "1.5e10")))
+      (ok (eq (lexer:token-type (first tokens)) :float))
+      (ok (= (lexer:token-value (first tokens)) 1.5d10))))
+
+  (testing "Float with negative exponent"
+    (let ((tokens (lexer:lex "1.5e-5")))
+      (ok (eq (lexer:token-type (first tokens)) :float))
+      (ok (< (abs (- (lexer:token-value (first tokens)) 1.5d-5)) 1.0d-10))))
+
+  (testing "Float with underscores"
+    (let ((tokens (lexer:lex "1_000.5")))
+      (ok (eq (lexer:token-type (first tokens)) :float))
+      (ok (< (abs (- (lexer:token-value (first tokens)) 1000.5d0)) 0.001d0)))))
 
 (deftest test-position-tracking
   (testing "Line and column tracking"

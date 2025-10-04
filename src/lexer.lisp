@@ -377,19 +377,83 @@
         (t
          (make-token :type :bare-key :value text :line line :column col))))))
 
-;;; Number and datetime lexing (placeholder)
+;;; Number and datetime lexing
+
+(defun parse-number-string (text)
+  "Parse a number string (with underscores removed) to integer or float"
+  (let ((clean (remove #\_ text)))
+    (cond
+      ;; Hex integer
+      ((and (>= (length clean) 3)
+            (char= (char clean 0) #\0)
+            (or (char= (char clean 1) #\x) (char= (char clean 1) #\X)))
+       (parse-integer clean :start 2 :radix 16))
+
+      ;; Octal integer
+      ((and (>= (length clean) 3)
+            (char= (char clean 0) #\0)
+            (or (char= (char clean 1) #\o) (char= (char clean 1) #\O)))
+       (parse-integer clean :start 2 :radix 8))
+
+      ;; Binary integer
+      ((and (>= (length clean) 3)
+            (char= (char clean 0) #\0)
+            (or (char= (char clean 1) #\b) (char= (char clean 1) #\B)))
+       (parse-integer clean :start 2 :radix 2))
+
+      ;; Float (contains . or e/E)
+      ((or (find #\. clean) (find #\e clean) (find #\E clean))
+       (let ((*read-default-float-format* 'double-float))
+         (read-from-string clean)))
+
+      ;; Regular integer
+      (t
+       (parse-integer clean)))))
 
 (defun lex-number-or-datetime (lexer line col)
   "Lex a number (integer/float) or datetime"
-  ;; TODO: Implement proper number/datetime discrimination
-  (let ((chars '()))
+  (let ((chars '())
+        (start-pos (lexer-position lexer)))
+    ;; Collect all characters that could be part of number or datetime
     (loop while (and (not (at-end-p lexer))
                      (or (digit-char-p (current-char lexer))
-                         (member (current-char lexer) '(#\+ #\- #\_ #\. #\e #\E #\x #\o #\b #\:))))
+                         (member (current-char lexer)
+                                '(#\+ #\- #\_ #\. #\e #\E #\x #\o #\b #\: #\T #\Z))))
           do (push (advance lexer) chars))
+
     (let ((text (coerce (nreverse chars) 'string)))
-      ;; Simple integer parsing for now
-      (make-token :type :integer
-                  :value (parse-integer text :junk-allowed t)
-                  :line line
-                  :column col))))
+      ;; Try to discriminate between datetime and number
+      ;; Datetime has format: YYYY-MM-DD, YYYY-MM-DDTHH:MM:SS, or HH:MM:SS
+      (cond
+        ;; Date or datetime
+        ;; Must have : for time, or - in date position (not after e/E for exponent)
+        ((or (and (find #\: text)
+                  (or (find #\T text)  ; datetime with T separator
+                      (and (>= (length text) 8)  ; time-only HH:MM:SS
+                           (digit-char-p (char text 0))
+                           (= (count #\: text) 2))))
+             ;; Date format: YYYY-MM-DD (- not after e or E)
+             (and (find #\- text)
+                  (not (find #\e text))
+                  (not (find #\E text))
+                  (>= (length text) 10)))
+         ;; For now, return as datetime token with string value
+         ;; TODO: Parse into proper datetime structures
+         (make-token :type :datetime
+                     :value text
+                     :line line
+                     :column col))
+
+        ;; Number
+        (t
+         (handler-case
+             (let ((value (parse-number-string text)))
+               (make-token :type (if (integerp value) :integer :float)
+                           :value value
+                           :line line
+                           :column col))
+           (error (e)
+             (error 'types:toml-parse-error
+                    :message (format nil "Invalid number format: ~A (~A)" text e)
+                    :line line
+                    :column col))))))))
