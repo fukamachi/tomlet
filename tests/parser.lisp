@@ -204,3 +204,89 @@
         (ok (eq (gethash "enabled" result) t))
         (ok (= (gethash "timeout" result) 30))
         (ok (eq (gethash "debug" result) nil))))))
+
+(deftest test-array-empty
+  (testing "Empty array"
+    (let ((result (tomlex:parse "arr = []")))
+      (ok (vectorp (gethash "arr" result)))
+      (ok (= (length (gethash "arr" result)) 0)))))
+
+(deftest test-array-integers
+  (testing "Simple integer array"
+    (let ((result (tomlex:parse "numbers = [1, 2, 3]")))
+      (let ((arr (gethash "numbers" result)))
+        (ok (vectorp arr))
+        (ok (= (length arr) 3))
+        (ok (= (aref arr 0) 1))
+        (ok (= (aref arr 1) 2))
+        (ok (= (aref arr 2) 3)))))
+
+  (testing "Array with trailing comma"
+    (let ((result (tomlex:parse "numbers = [1, 2, 3,]")))
+      (let ((arr (gethash "numbers" result)))
+        (ok (= (length arr) 3))
+        (ok (= (aref arr 0) 1))
+        (ok (= (aref arr 1) 2))
+        (ok (= (aref arr 2) 3))))))
+
+(deftest test-array-strings
+  (testing "String array"
+    (let ((result (tomlex:parse "colors = [\"red\", \"green\", \"blue\"]")))
+      (let ((arr (gethash "colors" result)))
+        (ok (vectorp arr))
+        (ok (= (length arr) 3))
+        (ok (string= (aref arr 0) "red"))
+        (ok (string= (aref arr 1) "green"))
+        (ok (string= (aref arr 2) "blue"))))))
+
+(deftest test-array-booleans
+  (testing "Boolean array"
+    (let ((result (tomlex:parse "flags = [true, false, true]")))
+      (let ((arr (gethash "flags" result)))
+        (ok (= (length arr) 3))
+        (ok (eq (aref arr 0) t))
+        (ok (eq (aref arr 1) nil))
+        (ok (eq (aref arr 2) t))))))
+
+(deftest test-array-mixed
+  (testing "Heterogeneous array"
+    (let ((result (tomlex:parse "mixed = [1, \"two\", true]")))
+      (let ((arr (gethash "mixed" result)))
+        (ok (= (length arr) 3))
+        (ok (= (aref arr 0) 1))
+        (ok (string= (aref arr 1) "two"))
+        (ok (eq (aref arr 2) t))))))
+
+(deftest test-array-nested
+  (testing "Nested arrays"
+    (let ((result (tomlex:parse "nested = [[1, 2], [3, 4]]")))
+      (let ((arr (gethash "nested" result)))
+        (ok (vectorp arr))
+        (ok (= (length arr) 2))
+        (ok (vectorp (aref arr 0)))
+        (ok (vectorp (aref arr 1)))
+        (ok (= (aref (aref arr 0) 0) 1))
+        (ok (= (aref (aref arr 0) 1) 2))
+        (ok (= (aref (aref arr 1) 0) 3))
+        (ok (= (aref (aref arr 1) 1) 4))))))
+
+(deftest test-array-multiline
+  (testing "Array with newlines"
+    (let ((result (tomlex:parse (format nil "arr = [~%  1,~%  2,~%  3~%]"))))
+      (let ((arr (gethash "arr" result)))
+        (ok (= (length arr) 3))
+        (ok (= (aref arr 0) 1))
+        (ok (= (aref arr 1) 2))
+        (ok (= (aref arr 2) 3)))))
+
+  (testing "Array with trailing comma and newline"
+    (let ((result (tomlex:parse (format nil "arr = [~%  1,~%  2,~%  3,~%]"))))
+      (let ((arr (gethash "arr" result)))
+        (ok (= (length arr) 3))))))
+
+(deftest test-array-single-element
+  (testing "Single element array"
+    (let ((result (tomlex:parse "single = [42]")))
+      (let ((arr (gethash "single" result)))
+        (ok (= (length arr) 1))
+        (ok (= (aref arr 0) 42))))))
