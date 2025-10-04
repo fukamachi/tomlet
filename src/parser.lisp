@@ -258,7 +258,7 @@
        (parse-inline-table state))
 
       ;; Simple values
-      ((:boolean :integer :float :string)
+      ((:boolean :integer :float :string :datetime)
        (advance-token state)
        (lexer:token-value token))
 

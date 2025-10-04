@@ -384,23 +384,54 @@
 
 ;;; Number and datetime lexing
 
+(defun split-datetime (text)
+  "Split datetime string on T, t, or space separator. Returns (date-part time-part)"
+  (let ((sep-pos (or (position #\T text)
+                     (position #\t text)
+                     (position #\Space text))))
+    (if sep-pos
+        (list (subseq text 0 sep-pos)
+              (subseq text (1+ sep-pos)))
+        (list text nil))))
+
 (defun parse-datetime-string (text)
   "Parse a datetime string into appropriate struct"
   (cond
-    ;; Offset datetime: YYYY-MM-DDTHH:MM:SS+HH:MM or with Z
-    ((and (find #\T text) (find #\: text)
-          (or (find #\Z text) (find #\+ text)
-              (and (> (length text) 10) (char= (char text (1- (length text))) #\-))))
-     (let* ((date-time-parts (uiop:split-string text :separator "T"))
+    ;; Offset datetime: YYYY-MM-DD(T| )HH:MM:SS+HH:MM or with Z
+    ;; Check for Z, +, or - in the time portion (after T/space)
+    ((and (or (find #\T text) (find #\t text) (find #\Space text))
+          (find #\: text)
+          (let* ((parts (split-datetime text))
+                 (time-part (second parts)))
+            (and time-part
+                 (or (find #\Z time-part)
+                     (find #\z time-part)
+                     (find #\+ time-part)
+                     ;; - in time part (offset), not in date part
+                     (and (find #\- time-part)
+                          ;; Make sure it's not just a negative time (check it's after position 2)
+                          (> (position #\- time-part :from-end t) 2))))))
+     (let* ((date-time-parts (split-datetime text))
             (date-part (first date-time-parts))
             (time-offset-part (second date-time-parts))
             (date-components (mapcar #'parse-integer (uiop:split-string date-part :separator "-")))
-            (time-str (subseq time-offset-part 0 (position-if (lambda (c) (member c '(#\+ #\- #\Z))) time-offset-part)))
-            (offset-str (subseq time-offset-part (length time-str)))
+            ;; Find offset marker from right (after seconds/fraction)
+            (offset-pos (position-if (lambda (c) (member c '(#\+ #\- #\Z #\z)))
+                                     time-offset-part
+                                     :from-end t
+                                     :start 2))  ; Skip first 2 chars (HH)
+            (time-str (if offset-pos
+                         (subseq time-offset-part 0 offset-pos)
+                         time-offset-part))
+            (offset-str (if offset-pos
+                           (subseq time-offset-part offset-pos)
+                           ""))
             (time-components (parse-time-components time-str))
-            (offset (if (string= offset-str "Z")
+            (offset (if (string= offset-str "")
                        0
-                       (parse-timezone-offset offset-str))))
+                       (if (or (string= offset-str "Z") (string= offset-str "z"))
+                           0
+                           (parse-timezone-offset offset-str)))))
        (types:make-offset-datetime
         :year (first date-components)
         :month (second date-components)
@@ -411,9 +442,10 @@
         :nanosecond (fourth time-components)
         :offset offset)))
 
-    ;; Local datetime: YYYY-MM-DDTHH:MM:SS
-    ((and (find #\T text) (find #\: text))
-     (let* ((date-time-parts (uiop:split-string text :separator "T"))
+    ;; Local datetime: YYYY-MM-DD(T| )HH:MM:SS
+    ((and (or (find #\T text) (find #\t text) (find #\Space text))
+          (find #\: text))
+     (let* ((date-time-parts (split-datetime text))
             (date-part (first date-time-parts))
             (time-part (second date-time-parts))
             (date-components (mapcar #'parse-integer (uiop:split-string date-part :separator "-")))
@@ -517,8 +549,12 @@
     (loop while (and (not (at-end-p lexer))
                      (or (digit-char-p (current-char lexer))
                          (member (current-char lexer)
-                                '(#\+ #\- #\_ #\. #\e #\E #\x #\X #\o #\O #\b #\B #\: #\T #\Z
-                                  #\a #\A #\b #\B #\c #\C #\d #\D #\e #\E #\f #\F))))
+                                '(#\+ #\- #\_ #\. #\e #\E #\x #\X #\o #\O #\b #\B #\: #\T #\t #\Z #\z
+                                  #\a #\A #\b #\B #\c #\C #\d #\D #\e #\E #\f #\F))
+                         ;; Include space if it might be a datetime separator (date followed by time)
+                         (and (char= (current-char lexer) #\Space)
+                              (let ((next-ch (peek-char-at lexer 1)))
+                                (and next-ch (digit-char-p next-ch))))))
           do (push (advance lexer) chars))
 
     (let ((text (coerce (nreverse chars) 'string)))
@@ -532,11 +568,13 @@
                       (and (>= (length text) 8)  ; time-only HH:MM:SS
                            (digit-char-p (char text 0))
                            (= (count #\: text) 2))))
-             ;; Date format: YYYY-MM-DD (- not after e or E)
-             (and (find #\- text)
-                  (not (find #\e text))
-                  (not (find #\E text))
-                  (>= (length text) 10)))
+             ;; Date format: YYYY-MM-DD
+             ;; Must start with digit (not + or -), and have - in proper position
+             (and (>= (length text) 10)
+                  (digit-char-p (char text 0))
+                  (find #\- text)
+                  ;; Ensure - appears in date position (after 4 digits), not as sign
+                  (>= (position #\- text) 4)))
          ;; Parse datetime string into appropriate struct
          (handler-case
              (make-token :type :datetime
@@ -549,7 +587,7 @@
                     :line line
                     :column col))))
 
-        ;; Number
+        ;; Number or bare key (if parsing fails and it looks like a key)
         (t
          (handler-case
              (let ((value (parse-number-string text)))
@@ -558,7 +596,19 @@
                            :line line
                            :column col))
            (error (e)
-             (error 'types:toml-parse-error
-                    :message (format nil "Invalid number format: ~A (~A)" text e)
-                    :line line
-                    :column col))))))))
+             ;; If number parsing fails and text looks like a bare key, continue collecting
+             ;; Bare keys can contain alphanumeric, -, and _
+             (if (every (lambda (c) (or (alphanumericp c) (char= c #\-) (char= c #\_))) text)
+                 (progn
+                   ;; Continue collecting remaining bare key characters
+                   (loop while (and (not (at-end-p lexer))
+                                    (or (alphanumericp (current-char lexer))
+                                        (char= (current-char lexer) #\_)
+                                        (char= (current-char lexer) #\-)))
+                         do (push (advance lexer) chars))
+                   (let ((full-text (coerce (nreverse chars) 'string)))
+                     (make-token :type :bare-key :value full-text :line line :column col)))
+                 (error 'types:toml-parse-error
+                        :message (format nil "Invalid number format: ~A (~A)" text e)
+                        :line line
+                        :column col)))))))))
