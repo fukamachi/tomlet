@@ -21,5 +21,6 @@
   :serial t
   :components
   ((:file "lexer")
+   (:file "parser")
    (:file "suite"))
   :perform (test-op (o c) (symbol-call :rove '#:run :tomlex/tests)))
