@@ -83,8 +83,8 @@
 
 (defstruct parser-state
   "Parser state for tracking position and context"
-  (tokens '() :type list)
-  (position 0 :type fixnum)
+  (lexer nil :type (or null lexer:lexer))
+  (current-token nil :type (or null lexer:token))
   (result (make-hash-table :test 'equal) :type hash-table)
   (current-table-path '() :type list)
   ;; Track which paths are arrays of tables (for [[array.of.tables]])
@@ -92,21 +92,16 @@
 
 (defun current-token (state)
   "Get current token without advancing"
-  (when (< (parser-state-position state) (length (parser-state-tokens state)))
-    (nth (parser-state-position state) (parser-state-tokens state))))
+  (parser-state-current-token state))
 
-(defun peek-token (state &optional (offset 1))
-  "Peek at token at offset positions ahead"
-  (let ((pos (+ (parser-state-position state) offset)))
-    (when (< pos (length (parser-state-tokens state)))
-      (nth pos (parser-state-tokens state)))))
+(defun advance-token (state &key (context :value))
+  "Advance to next token with given context (:key or :value)"
+  (setf (parser-state-current-token state)
+        (lexer:next-token (parser-state-lexer state) :context context)))
 
-(defun advance-token (state)
-  "Advance to next token"
-  (incf (parser-state-position state)))
-
-(defun expect-token (state expected-type)
-  "Expect a token of a specific type, error if not found"
+(defun expect-token (state expected-type &key (next-context :value))
+  "Expect a token of a specific type, error if not found.
+   NEXT-CONTEXT specifies the context for lexing the next token (:key or :value)."
   (let ((token (current-token state)))
     (unless token
       (error 'types:toml-parse-error
@@ -118,13 +113,14 @@
              :line (lexer:token-line token)
              :column (lexer:token-column token)))
     (prog1 token
-      (advance-token state))))
+      (advance-token state :context next-context))))
 
 (defun skip-newlines (state)
-  "Skip any newline tokens"
+  "Skip any newline tokens.
+   After newlines at top level, next token should be a key or table header."
   (loop while (and (current-token state)
                    (eq (lexer:token-type (current-token state)) :newline))
-        do (advance-token state)))
+        do (advance-token state :context :key)))
 
 ;;; Value Parsing
 
@@ -191,7 +187,7 @@
 
 (defun parse-inline-table (state)
   "Parse an inline table {key = value, ...}"
-  (expect-token state :left-brace)
+  (expect-token state :left-brace :next-context :key)
   (let ((table (make-hash-table :test 'equal)))
     ;; Empty inline table check
     (when (and (current-token state)
@@ -230,7 +226,7 @@
 
           ;; Comma - continue to next pair
           ((eq (lexer:token-type token) :comma)
-           (advance-token state))
+           (advance-token state :context :key))
 
           (t
            (error 'types:toml-parse-error
@@ -289,12 +285,12 @@
       ;; Regular bare key or string
       ((member (lexer:token-type token) '(:bare-key :string))
        (prog1 (lexer:token-value token)
-         (advance-token state)))
+         (advance-token state :context :key)))
 
       ;; Boolean keywords (true/false) can be keys
       ((eq (lexer:token-type token) :boolean)
        (prog1 (if (lexer:token-value token) "true" "false")
-         (advance-token state)))
+         (advance-token state :context :key)))
 
       ;; Float keywords (inf/nan) can be keys
       ((and (eq (lexer:token-type token) :float)
@@ -312,12 +308,12 @@
                  "nan")
                 (t (error 'types:toml-parse-error
                          :message "Unexpected float value as key")))
-         (advance-token state)))
+         (advance-token state :context :key)))
 
-      ;; Integer/float as bare key (unquoted numbers like "1", "3.14")
+      ;; Integer/float/datetime as bare key (will now be lexed as bare-key in key context)
       ((member (lexer:token-type token) '(:integer :float :datetime))
        (prog1 (format nil "~A" (lexer:token-value token))
-         (advance-token state)))
+         (advance-token state :context :key)))
 
       (t
        (error 'types:toml-parse-error
@@ -330,7 +326,7 @@
   (let ((keys (list (parse-key state))))
     (loop while (and (current-token state)
                      (eq (lexer:token-type (current-token state)) :dot))
-          do (advance-token state)  ; skip dot
+          do (advance-token state :context :key)  ; skip dot, next will be key
              (push (parse-key state) keys))
     (nreverse keys)))
 
@@ -375,14 +371,14 @@
 
 (defun parse-table-header (state)
   "Parse a table header [section.name] or [[array.of.tables]]"
-  (expect-token state :left-bracket)
+  (expect-token state :left-bracket :next-context :key)
 
   ;; Check if this is an array of tables [[...]]
   (let ((is-array-table nil))
     (when (and (current-token state)
                (eq (lexer:token-type (current-token state)) :left-bracket))
       (setf is-array-table t)
-      (advance-token state))
+      (advance-token state :context :key))
 
     (let ((key-path (parse-dotted-key state)))
       (expect-token state :right-bracket)
@@ -483,8 +479,10 @@
   ;; Note: UTF-8 validation happens at the file reading layer in SBCL.
   ;; Invalid UTF-8 byte sequences cause stream decoding errors before
   ;; the string reaches this function, so no additional validation is needed.
-  (let* ((tokens (lexer:lex string))
-         (state (make-parser-state :tokens tokens)))
+  (let* ((lex (lexer:make-lexer :input string))
+         (state (make-parser-state :lexer lex)))
+    ;; Get the first token - use :key context since top-level is either table header or key
+    (advance-token state :context :key)
     ;; Parse document
     (loop
       (skip-newlines state)

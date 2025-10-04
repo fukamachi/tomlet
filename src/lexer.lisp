@@ -8,6 +8,9 @@
            #:token-value
            #:token-line
            #:token-column
+           #:lexer
+           #:make-lexer
+           #:next-token
            #:lex
            #:lex-string))
 (in-package #:tomlet/lexer)
@@ -55,8 +58,11 @@
   "Alias for lex-string"
   (lex-string input))
 
-(defun next-token (lexer)
-  "Read the next token from the lexer"
+(defun next-token (lexer &key (context :value))
+  "Read the next token from the lexer.
+   CONTEXT is :key or :value - affects how ambiguous tokens are lexed.
+   In :key context, numbers and dates are lexed conservatively as bare keys.
+   In :value context, numbers and dates are parsed normally."
   (skip-whitespace lexer)
   (when (at-end-p lexer)
     (return-from next-token (make-token :type :eof
@@ -70,7 +76,7 @@
       ;; Comments
       ((char= ch #\#)
        (skip-comment lexer)
-       (next-token lexer))
+       (next-token lexer :context context))
 
       ;; Newlines
       ((char= ch #\Newline)
@@ -118,8 +124,11 @@
        (lex-bare-key-or-keyword lexer line col))
 
       ;; Numbers (including dates which start with digits)
+      ;; In key context, lex conservatively as bare keys
       ((or (digit-char-p ch) (char= ch #\+) (char= ch #\-))
-       (lex-number-or-datetime lexer line col))
+       (if (eq context :key)
+           (lex-bare-key-conservative lexer line col)
+           (lex-number-or-datetime lexer line col)))
 
       (t
        (error 'types:toml-parse-error
@@ -426,6 +435,22 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
          (make-token :type :float :value (make-nan) :line line :column col))
         (t
          (make-token :type :bare-key :value text :line line :column col))))))
+
+(defun lex-bare-key-conservative (lexer line col)
+  "Lex a bare key without trying datetime/number parsing.
+   Used in key context where '1.2' should be two keys '1' and '2', not a float.
+   Collects alphanumeric characters, digits, hyphens, and underscores."
+  (let ((chars '()))
+    (loop while (and (not (at-end-p lexer))
+                     (let ((ch (current-char lexer)))
+                       (or (alphanumericp ch)
+                           (char= ch #\-)
+                           (char= ch #\_))))
+          do (push (advance lexer) chars))
+    (make-token :type :bare-key
+                :value (coerce (nreverse chars) 'string)
+                :line line
+                :column col)))
 
 ;;; Number and datetime lexing
 

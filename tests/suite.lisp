@@ -141,15 +141,15 @@
 
 (defun run-invalid-test (test-path)
   "Run a single invalid test case - parser should signal an error."
-  (let* ((toml-file (merge-pathnames test-path *test-dir*))
-         (toml-content (uiop:read-file-string toml-file)))
+  (let ((toml-file (merge-pathnames test-path *test-dir*)))
     (handler-case
         (progn
-          (tomlet:parse toml-content)
-          (error "Test ~A should have failed but didn't" test-path))
+          (let ((toml-content (uiop:read-file-string toml-file)))
+            (tomlet:parse toml-content)
+            (error "Test ~A should have failed but didn't" test-path)))
       (tomlet:toml-error () t)
       (error (e)
-        ;; Some other error - this counts as rejecting invalid input
+        ;; Some other error (including UTF-8 decoding errors) - counts as rejecting invalid input
         (declare (ignore e))
         t))))
 
