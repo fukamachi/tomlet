@@ -268,11 +268,21 @@
                    (loop while (and (not (at-end-p lexer))
                                     (member (current-char lexer) '(#\Space #\Tab)))
                          do (advance lexer))
-                   ;; Check if we found a newline
+                   ;; Check if we found a newline (LF or CRLF)
                    (if (and (not (at-end-p lexer))
-                            (char= (current-char lexer) #\Newline))
+                            (or (char= (current-char lexer) #\Newline)
+                                (char= (current-char lexer) #\Return)))
                        (progn
-                         (advance lexer) ;; Skip newline
+                         ;; Handle CRLF: skip \r if followed by \n
+                         (when (char= (current-char lexer) #\Return)
+                           (advance lexer)
+                           (when (and (not (at-end-p lexer))
+                                      (char= (current-char lexer) #\Newline))
+                             (advance lexer)))
+                         ;; Handle LF: skip \n
+                         (when (and (not (at-end-p lexer))
+                                    (char= (current-char lexer) #\Newline))
+                           (advance lexer))
                          ;; Skip whitespace at beginning of next line
                          (loop while (and (not (at-end-p lexer))
                                           (member (current-char lexer) '(#\Space #\Tab #\Newline #\Return)))
