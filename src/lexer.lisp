@@ -356,6 +356,11 @@
 
 ;;; Bare key and keyword lexing
 
+(defun make-nan ()
+  "Create a NaN value at runtime"
+  ;; Read the NaN literal representation
+  (read-from-string "#.(sb-int:with-float-traps-masked (:invalid) (/ 0.0d0 0.0d0))"))
+
 (defun lex-bare-key-or-keyword (lexer line col)
   "Lex a bare key or keyword (true, false, inf, nan)"
   (let ((chars '()))
@@ -373,7 +378,7 @@
         ((string= text "inf")
          (make-token :type :float :value sb-ext:double-float-positive-infinity :line line :column col))
         ((string= text "nan")
-         (make-token :type :float :value sb-ext:double-float-positive-infinity :line line :column col)) ;; TODO: proper NaN
+         (make-token :type :float :value (make-nan) :line line :column col))
         (t
          (make-token :type :bare-key :value text :line line :column col))))))
 

@@ -272,18 +272,45 @@
 ;;; Key-Value Pair Parsing
 
 (defun parse-key (state)
-  "Parse a key (bare key or quoted string)"
+  "Parse a key (bare key, quoted string, or keyword like inf/nan/true/false)"
   (let ((token (current-token state)))
     (unless token
       (error 'types:toml-parse-error
              :message "Expected key but got end of input"))
-    (unless (member (lexer:token-type token) '(:bare-key :string))
-      (error 'types:toml-parse-error
-             :message (format nil "Expected key but got ~A" (lexer:token-type token))
-             :line (lexer:token-line token)
-             :column (lexer:token-column token)))
-    (prog1 (lexer:token-value token)
-      (advance-token state))))
+    (cond
+      ;; Regular bare key or string
+      ((member (lexer:token-type token) '(:bare-key :string))
+       (prog1 (lexer:token-value token)
+         (advance-token state)))
+
+      ;; Boolean keywords (true/false) can be keys
+      ((eq (lexer:token-type token) :boolean)
+       (prog1 (if (lexer:token-value token) "true" "false")
+         (advance-token state)))
+
+      ;; Float keywords (inf/nan) can be keys
+      ((and (eq (lexer:token-type token) :float)
+            (let ((val (lexer:token-value token)))
+              (or (sb-ext:float-infinity-p val)
+                  (sb-ext:float-nan-p val))))
+       (prog1 (cond
+                ((and (sb-ext:float-infinity-p (lexer:token-value token))
+                      (plusp (lexer:token-value token)))
+                 "inf")
+                ((and (sb-ext:float-infinity-p (lexer:token-value token))
+                      (minusp (lexer:token-value token)))
+                 "-inf")
+                ((sb-ext:float-nan-p (lexer:token-value token))
+                 "nan")
+                (t (error 'types:toml-parse-error
+                         :message "Unexpected float value as key")))
+         (advance-token state)))
+
+      (t
+       (error 'types:toml-parse-error
+              :message (format nil "Expected key but got ~A" (lexer:token-type token))
+              :line (lexer:token-line token)
+              :column (lexer:token-column token))))))
 
 (defun parse-dotted-key (state)
   "Parse a dotted key (a.b.c) and return a list of key parts"
@@ -459,8 +486,8 @@
                  (set-current-array-table state key-path)
                  (set-current-table state key-path))))
 
-          ;; Key-value pair
-          ((member (lexer:token-type token) '(:bare-key :string))
+          ;; Key-value pair (including keywords like inf, nan, true, false as keys)
+          ((member (lexer:token-type token) '(:bare-key :string :boolean :float))
            (parse-key-value state))
 
           (t
