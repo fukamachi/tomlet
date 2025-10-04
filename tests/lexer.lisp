@@ -42,14 +42,14 @@
       (ok (eq (lexer:token-type (first tokens)) :equals))))
 
   (testing "Newlines are preserved"
-    (let ((tokens (lexer:lex "=\n=")))
+    (let ((tokens (lexer:lex (format nil "=~%="))))
       (ok (= (length tokens) 4))
       (ok (eq (lexer:token-type (first tokens)) :equals))
       (ok (eq (lexer:token-type (second tokens)) :newline))
       (ok (eq (lexer:token-type (third tokens)) :equals))))
 
   (testing "Multiple newlines"
-    (let ((tokens (lexer:lex "\n\n")))
+    (let ((tokens (lexer:lex (format nil "~%~%"))))
       (ok (= (length tokens) 3))
       (ok (eq (lexer:token-type (first tokens)) :newline))
       (ok (eq (lexer:token-type (second tokens)) :newline)))))
@@ -306,3 +306,44 @@
       (ok (eq (lexer:token-type (fourth tokens)) :dot))
       (ok (eq (lexer:token-type (fifth tokens)) :bare-key))
       (ok (string= (lexer:token-value (fifth tokens)) "c")))))
+
+(deftest test-datetimes
+  (testing "Local date"
+    (let ((tokens (lexer:lex "1979-05-27")))
+      (ok (eq (lexer:token-type (first tokens)) :datetime))
+      (ok (tomlex/types:local-date-p (lexer:token-value (first tokens))))
+      (ok (= (tomlex/types:local-date-year (lexer:token-value (first tokens))) 1979))
+      (ok (= (tomlex/types:local-date-month (lexer:token-value (first tokens))) 5))
+      (ok (= (tomlex/types:local-date-day (lexer:token-value (first tokens))) 27))))
+
+  (testing "Local time"
+    (let ((tokens (lexer:lex "07:32:00")))
+      (ok (eq (lexer:token-type (first tokens)) :datetime))
+      (ok (tomlex/types:local-time-p (lexer:token-value (first tokens))))
+      (ok (= (tomlex/types:local-time-hour (lexer:token-value (first tokens))) 7))
+      (ok (= (tomlex/types:local-time-minute (lexer:token-value (first tokens))) 32))
+      (ok (= (tomlex/types:local-time-second (lexer:token-value (first tokens))) 0))))
+
+  (testing "Local datetime"
+    (let ((tokens (lexer:lex "1979-05-27T07:32:00")))
+      (ok (eq (lexer:token-type (first tokens)) :datetime))
+      (ok (tomlex/types:local-datetime-p (lexer:token-value (first tokens))))
+      (ok (= (tomlex/types:local-datetime-year (lexer:token-value (first tokens))) 1979))
+      (ok (= (tomlex/types:local-datetime-month (lexer:token-value (first tokens))) 5))
+      (ok (= (tomlex/types:local-datetime-day (lexer:token-value (first tokens))) 27))
+      (ok (= (tomlex/types:local-datetime-hour (lexer:token-value (first tokens))) 7))
+      (ok (= (tomlex/types:local-datetime-minute (lexer:token-value (first tokens))) 32))
+      (ok (= (tomlex/types:local-datetime-second (lexer:token-value (first tokens))) 0))))
+
+  (testing "Offset datetime with Z"
+    (let ((tokens (lexer:lex "1979-05-27T07:32:00Z")))
+      (ok (eq (lexer:token-type (first tokens)) :datetime))
+      (ok (tomlex/types:offset-datetime-p (lexer:token-value (first tokens))))
+      (ok (= (tomlex/types:offset-datetime-year (lexer:token-value (first tokens))) 1979))
+      (ok (= (tomlex/types:offset-datetime-offset (lexer:token-value (first tokens))) 0))))
+
+  (testing "Offset datetime with timezone"
+    (let ((tokens (lexer:lex "1979-05-27T00:32:00+07:00")))
+      (ok (eq (lexer:token-type (first tokens)) :datetime))
+      (ok (tomlex/types:offset-datetime-p (lexer:token-value (first tokens))))
+      (ok (= (tomlex/types:offset-datetime-offset (lexer:token-value (first tokens))) 420)))))

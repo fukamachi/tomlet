@@ -379,6 +379,101 @@
 
 ;;; Number and datetime lexing
 
+(defun parse-datetime-string (text)
+  "Parse a datetime string into appropriate struct"
+  (cond
+    ;; Offset datetime: YYYY-MM-DDTHH:MM:SS+HH:MM or with Z
+    ((and (find #\T text) (find #\: text)
+          (or (find #\Z text) (find #\+ text)
+              (and (> (length text) 10) (char= (char text (1- (length text))) #\-))))
+     (let* ((date-time-parts (uiop:split-string text :separator "T"))
+            (date-part (first date-time-parts))
+            (time-offset-part (second date-time-parts))
+            (date-components (mapcar #'parse-integer (uiop:split-string date-part :separator "-")))
+            (time-str (subseq time-offset-part 0 (position-if (lambda (c) (member c '(#\+ #\- #\Z))) time-offset-part)))
+            (offset-str (subseq time-offset-part (length time-str)))
+            (time-components (parse-time-components time-str))
+            (offset (if (string= offset-str "Z")
+                       0
+                       (parse-timezone-offset offset-str))))
+       (types:make-offset-datetime
+        :year (first date-components)
+        :month (second date-components)
+        :day (third date-components)
+        :hour (first time-components)
+        :minute (second time-components)
+        :second (third time-components)
+        :nanosecond (fourth time-components)
+        :offset offset)))
+
+    ;; Local datetime: YYYY-MM-DDTHH:MM:SS
+    ((and (find #\T text) (find #\: text))
+     (let* ((date-time-parts (uiop:split-string text :separator "T"))
+            (date-part (first date-time-parts))
+            (time-part (second date-time-parts))
+            (date-components (mapcar #'parse-integer (uiop:split-string date-part :separator "-")))
+            (time-components (parse-time-components time-part)))
+       (types:make-local-datetime
+        :year (first date-components)
+        :month (second date-components)
+        :day (third date-components)
+        :hour (first time-components)
+        :minute (second time-components)
+        :second (third time-components)
+        :nanosecond (fourth time-components))))
+
+    ;; Local date: YYYY-MM-DD
+    ((and (find #\- text) (not (find #\: text)))
+     (let ((components (mapcar #'parse-integer (uiop:split-string text :separator "-"))))
+       (types:make-local-date
+        :year (first components)
+        :month (second components)
+        :day (third components))))
+
+    ;; Local time: HH:MM:SS
+    ((and (find #\: text) (not (find #\- text)) (not (find #\T text)))
+     (let ((components (parse-time-components text)))
+       (types:make-local-time
+        :hour (first components)
+        :minute (second components)
+        :second (third components)
+        :nanosecond (fourth components))))
+
+    (t
+     (error 'types:toml-parse-error
+            :message (format nil "Invalid datetime format: ~A" text)))))
+
+(defun parse-time-components (time-str)
+  "Parse HH:MM:SS[.fraction] into (hour minute second nanosecond)"
+  (let* ((has-fraction (find #\. time-str))
+         (main-part (if has-fraction
+                       (subseq time-str 0 (position #\. time-str))
+                       time-str))
+         (fraction-part (if has-fraction
+                           (subseq time-str (1+ (position #\. time-str)))
+                           "0"))
+         (components (mapcar #'parse-integer (uiop:split-string main-part :separator ":")))
+         (nanoseconds (parse-fractional-seconds fraction-part)))
+    (list (first components)
+          (second components)
+          (third components)
+          nanoseconds)))
+
+(defun parse-fractional-seconds (frac-str)
+  "Parse fractional seconds string to nanoseconds"
+  (if (string= frac-str "0")
+      0
+      (let* ((padded (format nil "~A~V@{~A~:*~}" frac-str (- 9 (length frac-str)) "0")))
+        (parse-integer (subseq padded 0 9)))))
+
+(defun parse-timezone-offset (offset-str)
+  "Parse timezone offset (+HH:MM or -HH:MM) to minutes"
+  (let* ((sign (if (char= (char offset-str 0) #\+) 1 -1))
+         (parts (uiop:split-string (subseq offset-str 1) :separator ":"))
+         (hours (parse-integer (first parts)))
+         (minutes (if (second parts) (parse-integer (second parts)) 0)))
+    (* sign (+ (* hours 60) minutes))))
+
 (defun parse-number-string (text)
   "Parse a number string (with underscores removed) to integer or float"
   (let ((clean (remove #\_ text)))
@@ -412,13 +507,13 @@
 
 (defun lex-number-or-datetime (lexer line col)
   "Lex a number (integer/float) or datetime"
-  (let ((chars '())
-        (start-pos (lexer-position lexer)))
+  (let ((chars '()))
     ;; Collect all characters that could be part of number or datetime
     (loop while (and (not (at-end-p lexer))
                      (or (digit-char-p (current-char lexer))
                          (member (current-char lexer)
-                                '(#\+ #\- #\_ #\. #\e #\E #\x #\o #\b #\: #\T #\Z))))
+                                '(#\+ #\- #\_ #\. #\e #\E #\x #\X #\o #\O #\b #\B #\: #\T #\Z
+                                  #\a #\A #\b #\B #\c #\C #\d #\D #\e #\E #\f #\F))))
           do (push (advance lexer) chars))
 
     (let ((text (coerce (nreverse chars) 'string)))
@@ -437,12 +532,17 @@
                   (not (find #\e text))
                   (not (find #\E text))
                   (>= (length text) 10)))
-         ;; For now, return as datetime token with string value
-         ;; TODO: Parse into proper datetime structures
-         (make-token :type :datetime
-                     :value text
-                     :line line
-                     :column col))
+         ;; Parse datetime string into appropriate struct
+         (handler-case
+             (make-token :type :datetime
+                         :value (parse-datetime-string text)
+                         :line line
+                         :column col)
+           (error (e)
+             (error 'types:toml-parse-error
+                    :message (format nil "Invalid datetime: ~A (~A)" text e)
+                    :line line
+                    :column col))))
 
         ;; Number
         (t

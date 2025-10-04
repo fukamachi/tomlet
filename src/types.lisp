@@ -6,17 +6,20 @@
            #:toml-parse-error-line
            #:toml-parse-error-column
            #:local-date
+           #:local-date-p
            #:make-local-date
            #:local-date-year
            #:local-date-month
            #:local-date-day
            #:local-time
+           #:local-time-p
            #:make-local-time
            #:local-time-hour
            #:local-time-minute
            #:local-time-second
            #:local-time-nanosecond
            #:local-datetime
+           #:local-datetime-p
            #:make-local-datetime
            #:local-datetime-year
            #:local-datetime-month
@@ -26,6 +29,7 @@
            #:local-datetime-second
            #:local-datetime-nanosecond
            #:offset-datetime
+           #:offset-datetime-p
            #:make-offset-datetime
            #:offset-datetime-year
            #:offset-datetime-month
