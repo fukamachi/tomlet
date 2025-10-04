@@ -397,9 +397,11 @@
          (make-token :type :boolean :value t :line line :column col))
         ((string= text "false")
          (make-token :type :boolean :value nil :line line :column col))
-        ((string= text "inf")
+        ((or (string= text "inf") (string= text "+inf"))
          (make-token :type :float :value sb-ext:double-float-positive-infinity :line line :column col))
-        ((string= text "nan")
+        ((string= text "-inf")
+         (make-token :type :float :value sb-ext:double-float-negative-infinity :line line :column col))
+        ((or (string= text "nan") (string= text "+nan") (string= text "-nan"))
          (make-token :type :float :value (make-nan) :line line :column col))
         (t
          (make-token :type :bare-key :value text :line line :column col))))))
@@ -572,7 +574,8 @@
                      (or (digit-char-p (current-char lexer))
                          (member (current-char lexer)
                                 '(#\+ #\- #\_ #\. #\e #\E #\x #\X #\o #\O #\b #\B #\: #\T #\t #\Z #\z
-                                  #\a #\A #\b #\B #\c #\C #\d #\D #\e #\E #\f #\F))
+                                  #\a #\A #\b #\B #\c #\C #\d #\D #\e #\E #\f #\F
+                                  #\i #\I #\n #\N)) ; for inf and nan
                          ;; Include space if it might be a datetime separator (date followed by time)
                          (and (char= (current-char lexer) #\Space)
                               (let ((next-ch (peek-char-at lexer 1)))
@@ -580,9 +583,17 @@
           do (push (advance lexer) chars))
 
     (let ((text (coerce (nreverse chars) 'string)))
-      ;; Try to discriminate between datetime and number
-      ;; Datetime has format: YYYY-MM-DD, YYYY-MM-DDTHH:MM:SS, or HH:MM:SS
+      ;; Check for special float values first
       (cond
+        ((or (string= text "inf") (string= text "+inf"))
+         (make-token :type :float :value sb-ext:double-float-positive-infinity :line line :column col))
+        ((string= text "-inf")
+         (make-token :type :float :value sb-ext:double-float-negative-infinity :line line :column col))
+        ((or (string= text "nan") (string= text "+nan") (string= text "-nan"))
+         (make-token :type :float :value (make-nan) :line line :column col))
+
+        ;; Try to discriminate between datetime and number
+        ;; Datetime has format: YYYY-MM-DD, YYYY-MM-DDTHH:MM:SS, or HH:MM:SS
         ;; Date or datetime
         ;; Must have : for time, or - in date position (not after e/E for exponent)
         ((or (and (find #\: text)
@@ -633,11 +644,19 @@
                                :line line
                                :column col))
                (error (e)
-                 ;; If number parsing fails and text looks like a bare key, return as bare key
-                 ;; Bare keys can contain alphanumeric, -, and _
-                 (if (every (lambda (c) (or (alphanumericp c) (char= c #\-) (char= c #\_))) text)
-                     (make-token :type :bare-key :value text :line line :column col)
-                     (error 'types:toml-parse-error
-                            :message (format nil "Invalid number format: ~A (~A)" text e)
-                            :line line
-                            :column col))))))))))
+                 ;; Check for signed inf/nan
+                 (cond
+                   ((or (string= text "+inf") (string= text "inf"))
+                    (make-token :type :float :value sb-ext:double-float-positive-infinity :line line :column col))
+                   ((string= text "-inf")
+                    (make-token :type :float :value sb-ext:double-float-negative-infinity :line line :column col))
+                   ((or (string= text "nan") (string= text "+nan") (string= text "-nan"))
+                    (make-token :type :float :value (make-nan) :line line :column col))
+                   ;; If number parsing fails and text looks like a bare key, return as bare key
+                   ((every (lambda (c) (or (alphanumericp c) (char= c #\-) (char= c #\_) (char= c #\+))) text)
+                    (make-token :type :bare-key :value text :line line :column col))
+                   (t
+                    (error 'types:toml-parse-error
+                           :message (format nil "Invalid number format: ~A (~A)" text e)
+                           :line line
+                           :column col)))))))))))
