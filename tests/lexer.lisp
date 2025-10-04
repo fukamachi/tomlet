@@ -173,7 +173,8 @@
 
   (testing "Multi-line string with quote inside"
     (let ((tokens (lexer:lex "\"\"\"She said \"hello\"\"\"\"\"")))
-      (ok (string= (lexer:token-value (first tokens)) "She said \"hello")))))
+      ;; Input has 5 closing quotes, so 2 quotes are added to content: "She said "hello""
+      (ok (string= (lexer:token-value (first tokens)) "She said \"hello\"\"")))))
 
 (deftest test-multiline-literal-strings
   (testing "Simple multi-line literal string"

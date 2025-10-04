@@ -170,6 +170,27 @@
 
 ;;; String lexing with escape sequences
 
+(defun handle-multiline-closing-quotes (lexer quote-char)
+  "Handle closing quotes in multiline strings using greedy quote counting.
+Returns (values :closed content-quotes) if string is closed, where content-quotes is the number of quotes to add.
+Returns (values :continue nil) if quotes are part of content (caller should re-lex them)."
+  (let ((quote-count 0)
+        (saved-pos (lexer-position lexer)))
+    ;; Count consecutive quotes
+    (loop while (and (not (at-end-p lexer))
+                     (char= (current-char lexer) quote-char))
+          do (incf quote-count)
+             (advance lexer))
+
+    (if (>= quote-count 3)
+        ;; Found closing delimiter
+        ;; Return number of content quotes (quote-count - 3)
+        (values :closed (- quote-count 3))
+        ;; Less than 3 quotes - restore position and caller will handle them
+        (progn
+          (setf (lexer-position lexer) saved-pos)
+          (values :continue quote-count)))))
+
 (defun parse-hex-escape (lexer num-digits)
   "Parse a hex escape sequence of NUM-DIGITS hex digits"
   (let ((hex-chars '()))
@@ -239,18 +260,18 @@
             ;; Check for closing quotes
             ((char= ch #\")
              (if is-multiline
-                 ;; Need to see """
-                 (if (and (peek-char-at lexer 1)
-                          (char= (peek-char-at lexer 1) #\")
-                          (peek-char-at lexer 2)
-                          (char= (peek-char-at lexer 2) #\"))
-                     (progn
-                       (advance lexer) ;; Skip first "
-                       (advance lexer) ;; Skip second "
-                       (advance lexer) ;; Skip third "
-                       (return))
-                     ;; Just a single " inside multi-line string
-                     (push (advance lexer) chars))
+                 ;; Use greedy quote counting for multiline strings
+                 (multiple-value-bind (status content-quotes)
+                     (handle-multiline-closing-quotes lexer #\")
+                   (if (eq status :closed)
+                       (progn
+                         ;; Add content quotes and close string
+                         (dotimes (i content-quotes)
+                           (push #\" chars))
+                         (return))
+                       ;; Less than 3 quotes - add them as content
+                       (dotimes (i content-quotes)
+                         (push (advance lexer) chars))))
                  ;; Single-line string - done
                  (progn
                    (advance lexer)
@@ -343,18 +364,18 @@
             ;; Check for closing quotes
             ((char= ch #\')
              (if is-multiline
-                 ;; Need to see '''
-                 (if (and (peek-char-at lexer 1)
-                          (char= (peek-char-at lexer 1) #\')
-                          (peek-char-at lexer 2)
-                          (char= (peek-char-at lexer 2) #\'))
-                     (progn
-                       (advance lexer) ;; Skip first '
-                       (advance lexer) ;; Skip second '
-                       (advance lexer) ;; Skip third '
-                       (return))
-                     ;; Just a single ' inside multi-line string
-                     (push (advance lexer) chars))
+                 ;; Use greedy quote counting for multiline strings
+                 (multiple-value-bind (status content-quotes)
+                     (handle-multiline-closing-quotes lexer #\')
+                   (if (eq status :closed)
+                       (progn
+                         ;; Add content quotes and close string
+                         (dotimes (i content-quotes)
+                           (push #\' chars))
+                         (return))
+                       ;; Less than 3 quotes - add them as content
+                       (dotimes (i content-quotes)
+                         (push (advance lexer) chars))))
                  ;; Single-line string - done
                  (progn
                    (advance lexer)
