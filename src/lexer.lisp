@@ -168,45 +168,191 @@
                    (not (char= (current-char lexer) #\Newline)))
         do (advance lexer)))
 
-;;; String lexing (placeholder)
+;;; String lexing with escape sequences
+
+(defun parse-hex-escape (lexer num-digits)
+  "Parse a hex escape sequence of NUM-DIGITS hex digits"
+  (let ((hex-chars '()))
+    (dotimes (i num-digits)
+      (when (at-end-p lexer)
+        (error 'types:toml-parse-error
+               :message (format nil "Incomplete hex escape sequence (expected ~D digits)" num-digits)))
+      (let ((ch (current-char lexer)))
+        (unless (or (digit-char-p ch 16))
+          (error 'types:toml-parse-error
+                 :message (format nil "Invalid hex digit in escape sequence: ~C" ch)))
+        (push (advance lexer) hex-chars)))
+    (let ((code (parse-integer (coerce (nreverse hex-chars) 'string) :radix 16)))
+      (code-char code))))
+
+(defun lex-escape-sequence (lexer)
+  "Lex an escape sequence after seeing backslash"
+  (when (at-end-p lexer)
+    (error 'types:toml-parse-error
+           :message "Incomplete escape sequence at end of input"))
+  (let ((ch (advance lexer)))
+    (case ch
+      (#\b #\Backspace)
+      (#\t #\Tab)
+      (#\n #\Newline)
+      (#\f #\Page)
+      (#\r #\Return)
+      (#\" #\")
+      (#\\ #\\)
+      (#\e #\Escape)
+      (#\x (parse-hex-escape lexer 2))      ; \xHH
+      (#\u (parse-hex-escape lexer 4))      ; \uHHHH
+      (#\U (parse-hex-escape lexer 8))      ; \UHHHHHHHH
+      (t (error 'types:toml-parse-error
+                :message (format nil "Invalid escape sequence: \\~C" ch))))))
 
 (defun lex-string-token (lexer line col)
   "Lex a basic or multi-line basic string"
-  ;; TODO: Implement proper string lexing with escape sequences
   (advance lexer) ;; Skip opening "
-  (let ((chars '()))
-    (loop while (and (not (at-end-p lexer))
-                     (not (char= (current-char lexer) #\")))
-          do (push (advance lexer) chars))
-    (unless (and (not (at-end-p lexer)) (char= (current-char lexer) #\"))
-      (error 'types:toml-parse-error
-             :message "Unterminated string"
-             :line line
-             :column col))
-    (advance lexer) ;; Skip closing "
-    (make-token :type :string
-                :value (coerce (nreverse chars) 'string)
-                :line line
-                :column col)))
+
+  ;; Check for multi-line string (""")
+  (let ((is-multiline nil))
+    (when (and (not (at-end-p lexer))
+               (char= (current-char lexer) #\")
+               (peek-char-at lexer 1)
+               (char= (peek-char-at lexer 1) #\"))
+      (setf is-multiline t)
+      (advance lexer) ;; Skip second "
+      (advance lexer) ;; Skip third "
+      ;; Skip optional newline right after opening """
+      (when (and (not (at-end-p lexer))
+                 (char= (current-char lexer) #\Newline))
+        (advance lexer)))
+
+    (let ((chars '()))
+      (loop
+        (when (at-end-p lexer)
+          (error 'types:toml-parse-error
+                 :message (if is-multiline
+                              "Unterminated multi-line string"
+                              "Unterminated string")
+                 :line line
+                 :column col))
+
+        (let ((ch (current-char lexer)))
+          (cond
+            ;; Check for closing quotes
+            ((char= ch #\")
+             (if is-multiline
+                 ;; Need to see """
+                 (if (and (peek-char-at lexer 1)
+                          (char= (peek-char-at lexer 1) #\")
+                          (peek-char-at lexer 2)
+                          (char= (peek-char-at lexer 2) #\"))
+                     (progn
+                       (advance lexer) ;; Skip first "
+                       (advance lexer) ;; Skip second "
+                       (advance lexer) ;; Skip third "
+                       (return))
+                     ;; Just a single " inside multi-line string
+                     (push (advance lexer) chars))
+                 ;; Single-line string - done
+                 (progn
+                   (advance lexer)
+                   (return))))
+
+            ;; Escape sequences
+            ((char= ch #\\)
+             (advance lexer) ;; Skip backslash
+             ;; Line-ending backslash in multi-line strings
+             (if (and is-multiline
+                      (not (at-end-p lexer))
+                      (char= (current-char lexer) #\Newline))
+                 (progn
+                   (advance lexer) ;; Skip newline
+                   ;; Skip whitespace at beginning of next line
+                   (loop while (and (not (at-end-p lexer))
+                                    (member (current-char lexer) '(#\Space #\Tab #\Newline #\Return)))
+                         do (advance lexer)))
+                 ;; Regular escape sequence
+                 (push (lex-escape-sequence lexer) chars)))
+
+            ;; Newline in single-line string is error
+            ((and (not is-multiline) (char= ch #\Newline))
+             (error 'types:toml-parse-error
+                    :message "Newline not allowed in single-line string"
+                    :line line
+                    :column col))
+
+            ;; Regular character
+            (t
+             (push (advance lexer) chars)))))
+
+      (make-token :type :string
+                  :value (coerce (nreverse chars) 'string)
+                  :line line
+                  :column col))))
 
 (defun lex-literal-string-token (lexer line col)
   "Lex a literal or multi-line literal string"
-  ;; TODO: Implement proper literal string lexing
   (advance lexer) ;; Skip opening '
-  (let ((chars '()))
-    (loop while (and (not (at-end-p lexer))
-                     (not (char= (current-char lexer) #\')))
-          do (push (advance lexer) chars))
-    (unless (and (not (at-end-p lexer)) (char= (current-char lexer) #\'))
-      (error 'types:toml-parse-error
-             :message "Unterminated literal string"
-             :line line
-             :column col))
-    (advance lexer) ;; Skip closing '
-    (make-token :type :string
-                :value (coerce (nreverse chars) 'string)
-                :line line
-                :column col)))
+
+  ;; Check for multi-line literal string (''')
+  (let ((is-multiline nil))
+    (when (and (not (at-end-p lexer))
+               (char= (current-char lexer) #\')
+               (peek-char-at lexer 1)
+               (char= (peek-char-at lexer 1) #\'))
+      (setf is-multiline t)
+      (advance lexer) ;; Skip second '
+      (advance lexer) ;; Skip third '
+      ;; Skip optional newline right after opening '''
+      (when (and (not (at-end-p lexer))
+                 (char= (current-char lexer) #\Newline))
+        (advance lexer)))
+
+    (let ((chars '()))
+      (loop
+        (when (at-end-p lexer)
+          (error 'types:toml-parse-error
+                 :message (if is-multiline
+                              "Unterminated multi-line literal string"
+                              "Unterminated literal string")
+                 :line line
+                 :column col))
+
+        (let ((ch (current-char lexer)))
+          (cond
+            ;; Check for closing quotes
+            ((char= ch #\')
+             (if is-multiline
+                 ;; Need to see '''
+                 (if (and (peek-char-at lexer 1)
+                          (char= (peek-char-at lexer 1) #\')
+                          (peek-char-at lexer 2)
+                          (char= (peek-char-at lexer 2) #\'))
+                     (progn
+                       (advance lexer) ;; Skip first '
+                       (advance lexer) ;; Skip second '
+                       (advance lexer) ;; Skip third '
+                       (return))
+                     ;; Just a single ' inside multi-line string
+                     (push (advance lexer) chars))
+                 ;; Single-line string - done
+                 (progn
+                   (advance lexer)
+                   (return))))
+
+            ;; Newline in single-line literal string is error
+            ((and (not is-multiline) (char= ch #\Newline))
+             (error 'types:toml-parse-error
+                    :message "Newline not allowed in single-line literal string"
+                    :line line
+                    :column col))
+
+            ;; Regular character (no escapes in literal strings)
+            (t
+             (push (advance lexer) chars)))))
+
+      (make-token :type :string
+                  :value (coerce (nreverse chars) 'string)
+                  :line line
+                  :column col))))
 
 ;;; Bare key and keyword lexing
 

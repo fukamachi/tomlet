@@ -130,6 +130,66 @@
     (let ((tokens (lexer:lex "\"hello world\"")))
       (ok (string= (lexer:token-value (first tokens)) "hello world")))))
 
+(deftest test-string-escape-sequences
+  (testing "Basic escapes - newline and tab"
+    (let ((tokens (lexer:lex "\"\\n\\t\"")))
+      (ok (string= (lexer:token-value (first tokens))
+                   (format nil "~C~C" #\Newline #\Tab)))))
+
+  (testing "Basic escapes - quote and backslash"
+    (let ((tokens (lexer:lex "\"\\\"\\\\\"")))
+      (ok (string= (lexer:token-value (first tokens)) "\"\\"))))
+
+  (testing "Unicode escape \\u"
+    (let ((tokens (lexer:lex "\"\\u0041\"")))
+      (ok (string= (lexer:token-value (first tokens)) "A"))))
+
+  (testing "Unicode escape \\U"
+    (let ((tokens (lexer:lex "\"\\U0001F4A9\"")))
+      (ok (= (char-code (char (lexer:token-value (first tokens)) 0)) #x1F4A9))))
+
+  (testing "Hex escape \\x"
+    (let ((tokens (lexer:lex "\"\\x41\"")))
+      (ok (string= (lexer:token-value (first tokens)) "A"))))
+
+  (testing "Escape e (escape character)"
+    (let ((tokens (lexer:lex "\"\\e\"")))
+      (ok (= (char-code (char (lexer:token-value (first tokens)) 0)) #x1B)))))
+
+(deftest test-multiline-basic-strings
+  (testing "Simple multi-line string"
+    (let ((tokens (lexer:lex (format nil "\"\"\"~%line1~%line2~%\"\"\""))))
+      (ok (eq (lexer:token-type (first tokens)) :string))
+      (ok (string= (lexer:token-value (first tokens))
+                   (format nil "line1~%line2~%")))))
+
+  (testing "Multi-line string with line-ending backslash"
+    (let ((tokens (lexer:lex (format nil "\"\"\"The quick \\~%    brown fox\"\"\""))))
+      (ok (string= (lexer:token-value (first tokens)) "The quick brown fox"))))
+
+  (testing "Empty multi-line string"
+    (let ((tokens (lexer:lex "\"\"\"\"\"\"")))
+      (ok (string= (lexer:token-value (first tokens)) ""))))
+
+  (testing "Multi-line string with quote inside"
+    (let ((tokens (lexer:lex "\"\"\"She said \"hello\"\"\"\"\"")))
+      (ok (string= (lexer:token-value (first tokens)) "She said \"hello")))))
+
+(deftest test-multiline-literal-strings
+  (testing "Simple multi-line literal string"
+    (let ((tokens (lexer:lex (format nil "'''~%line1~%line2~%'''"))))
+      (ok (eq (lexer:token-type (first tokens)) :string))
+      (ok (string= (lexer:token-value (first tokens))
+                   (format nil "line1~%line2~%")))))
+
+  (testing "Multi-line literal with backslashes"
+    (let ((tokens (lexer:lex "'''C:\\\\Users\\\\name'''")))
+      (ok (string= (lexer:token-value (first tokens)) "C:\\\\Users\\\\name"))))
+
+  (testing "Empty multi-line literal string"
+    (let ((tokens (lexer:lex "''''''")))
+      (ok (string= (lexer:token-value (first tokens)) "")))))
+
 (deftest test-literal-strings
   (testing "Simple literal string"
     (let ((tokens (lexer:lex "'hello'")))
