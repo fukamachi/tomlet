@@ -636,10 +636,21 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
                          :line line
                          :column col)
            (error (e)
-             (error 'types:toml-parse-error
-                    :message (format nil "Invalid datetime: ~A (~A)" text e)
-                    :line line
-                    :column col))))
+             ;; If datetime parsing fails, it might be a bare key like "2000-datetime"
+             ;; Continue collecting remaining bare key characters
+             (loop while (and (not (at-end-p lexer))
+                              (or (alphanumericp (current-char lexer))
+                                  (char= (current-char lexer) #\_)
+                                  (char= (current-char lexer) #\-)))
+                   do (push (advance lexer) chars))
+             (let ((full-text (coerce (nreverse chars) 'string)))
+               ;; Check if the full text looks like a valid bare key
+               (if (every (lambda (c) (or (alphanumericp c) (char= c #\-) (char= c #\_))) full-text)
+                   (make-token :type :bare-key :value full-text :line line :column col)
+                   (error 'types:toml-parse-error
+                          :message (format nil "Invalid datetime: ~A (~A)" text e)
+                          :line line
+                          :column col))))))
 
         ;; Number or bare key (if parsing fails and it looks like a key)
         (t
