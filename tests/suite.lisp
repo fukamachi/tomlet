@@ -55,16 +55,13 @@
     (:bool
      (eq (string= expected "true") actual))
     (:datetime
-     (typep actual 'local-time:timestamp))
+     (typep actual 'tomlex/types:offset-datetime))
     (:datetime-local
-     ;; For local datetime, we need a special type - TBD
-     t)
+     (typep actual 'tomlex/types:local-datetime))
     (:date-local
-     ;; For local date, we need a special type - TBD
-     t)
+     (typep actual 'tomlex/types:local-date))
     (:time-local
-     ;; For local time, we need a special type - TBD
-     t)))
+     (typep actual 'tomlex/types:local-time))))
 
 (defun compare-toml-structures (expected actual)
   "Recursively compare expected JSON structure with actual parsed TOML."

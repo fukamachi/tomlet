@@ -3,7 +3,7 @@
   :version "0.1.0"
   :author "Eitaro Fukamachi"
   :license "MIT"
-  :depends-on ("local-time")
+  :depends-on ()
   :pathname "src"
   :serial t
   :components
