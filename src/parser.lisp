@@ -86,7 +86,9 @@
   (tokens '() :type list)
   (position 0 :type fixnum)
   (result (make-hash-table :test 'equal) :type hash-table)
-  (current-table-path '() :type list))
+  (current-table-path '() :type list)
+  ;; Track which paths are arrays of tables (for [[array.of.tables]])
+  (array-table-paths (make-hash-table :test 'equal) :type hash-table))
 
 (defun current-token (state)
   "Get current token without advancing"
@@ -332,11 +334,24 @@
 ;;; Table Section Parsing
 
 (defun parse-table-header (state)
-  "Parse a table header [section.name] and return the key path"
+  "Parse a table header [section.name] or [[array.of.tables]]"
   (expect-token state :left-bracket)
-  (let ((key-path (parse-dotted-key state)))
-    (expect-token state :right-bracket)
-    key-path))
+
+  ;; Check if this is an array of tables [[...]]
+  (let ((is-array-table nil))
+    (when (and (current-token state)
+               (eq (lexer:token-type (current-token state)) :left-bracket))
+      (setf is-array-table t)
+      (advance-token state))
+
+    (let ((key-path (parse-dotted-key state)))
+      (expect-token state :right-bracket)
+
+      ;; If array table, expect another right bracket
+      (when is-array-table
+        (expect-token state :right-bracket))
+
+      (values key-path is-array-table))))
 
 (defun set-current-table (state key-path)
   "Set the current table context for subsequent key-value pairs"
@@ -344,12 +359,81 @@
   ;; Ensure the table exists
   (get-or-create-table (parser-state-result state) key-path))
 
+(defun set-current-array-table (state key-path)
+  "Set current context to a new element in an array of tables"
+  (setf (parser-state-current-table-path state) key-path)
+
+  ;; Mark this path as an array table
+  (setf (gethash (format nil "~{~A~^.~}" key-path)
+                 (parser-state-array-table-paths state))
+        t)
+
+  ;; Navigate to the parent table (if any)
+  ;; For nested array tables like [[fruit.variety]], we need to get the last
+  ;; element of the parent array [[fruit]]
+  (let ((parent-table (if (> (length key-path) 1)
+                          (let ((parent-path (butlast key-path)))
+                            ;; Check if parent is an array table
+                            (if (gethash (format nil "~{~A~^.~}" parent-path)
+                                        (parser-state-array-table-paths state))
+                                ;; Parent is an array table - get last element
+                                (let ((parent-parent (if (> (length parent-path) 1)
+                                                        (get-or-create-table (parser-state-result state)
+                                                                            (butlast parent-path))
+                                                        (parser-state-result state)))
+                                      (parent-key (car (last parent-path))))
+                                  (let ((parent-array (gethash parent-key parent-parent)))
+                                    (when (and parent-array (vectorp parent-array) (> (length parent-array) 0))
+                                      (aref parent-array (1- (length parent-array))))))
+                                ;; Parent is a regular table
+                                (get-or-create-table (parser-state-result state) parent-path)))
+                          (parser-state-result state)))
+        (final-key (car (last key-path))))
+
+    ;; Get or create the array at this key
+    (let ((array (gethash final-key parent-table)))
+      (unless array
+        ;; Create new array
+        (setf array (make-array 0 :adjustable t :fill-pointer 0))
+        (setf (gethash final-key parent-table) array))
+
+      ;; Ensure it's actually an array
+      (unless (vectorp array)
+        (error 'types:toml-parse-error
+               :message (format nil "Cannot redefine ~A as array of tables" final-key)))
+
+      ;; Append a new table to the array
+      (let ((new-table (make-hash-table :test 'equal)))
+        (vector-push-extend new-table array)
+        new-table))))
+
 (defun get-current-table (state)
   "Get the current table for key-value assignments"
   (if (null (parser-state-current-table-path state))
       (parser-state-result state)
-      (get-or-create-table (parser-state-result state)
-                           (parser-state-current-table-path state))))
+      (let ((path (parser-state-current-table-path state)))
+        ;; Check if this is an array table path
+        (if (gethash (format nil "~{~A~^.~}" path)
+                     (parser-state-array-table-paths state))
+            ;; Return the last element of the array
+            ;; For nested arrays like [[fruit.variety]], we need to navigate through parent arrays
+            (let* ((table (parser-state-result state))
+                   (i 0))
+              (loop for key in path
+                    do (progn
+                         (incf i)
+                         (let ((path-so-far (subseq path 0 i)))
+                           (if (gethash (format nil "~{~A~^.~}" path-so-far)
+                                       (parser-state-array-table-paths state))
+                               ;; This level is an array table - get last element
+                               (let ((array (gethash key table)))
+                                 (when (and array (vectorp array) (> (length array) 0))
+                                   (setf table (aref array (1- (length array))))))
+                               ;; Regular table - navigate normally
+                               (setf table (gethash key table))))))
+              table)
+            ;; Regular table
+            (get-or-create-table (parser-state-result state) path)))))
 
 ;;; Main Parser Entry Points
 
@@ -367,10 +451,13 @@
         (when (eq (lexer:token-type token) :eof)
           (return))
         (cond
-          ;; Table header [section]
+          ;; Table header [section] or [[array.of.tables]]
           ((eq (lexer:token-type token) :left-bracket)
-           (let ((key-path (parse-table-header state)))
-             (set-current-table state key-path)))
+           (multiple-value-bind (key-path is-array-table)
+               (parse-table-header state)
+             (if is-array-table
+                 (set-current-array-table state key-path)
+                 (set-current-table state key-path))))
 
           ;; Key-value pair
           ((member (lexer:token-type token) '(:bare-key :string))

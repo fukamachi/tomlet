@@ -390,3 +390,34 @@
         (let ((a-table (gethash "a" section)))
           (ok (hash-table-p a-table))
           (ok (= (gethash "b" a-table) 1)))))))
+
+(deftest test-array-of-tables
+  (testing "Simple array of tables"
+    (let ((result (tomlex:parse (format nil "[[products]]~%name = \"Hammer\"~%~%[[products]]~%name = \"Nail\""))))
+      (let ((products (gethash "products" result)))
+        (ok (vectorp products))
+        (ok (= (length products) 2))
+        (ok (hash-table-p (aref products 0)))
+        (ok (string= (gethash "name" (aref products 0)) "Hammer"))
+        (ok (hash-table-p (aref products 1)))
+        (ok (string= (gethash "name" (aref products 1)) "Nail")))))
+
+  (testing "Array of tables with multiple keys"
+    (let ((result (tomlex:parse (format nil "[[products]]~%name = \"Hammer\"~%sku = 738594937~%~%[[products]]~%name = \"Nail\"~%sku = 284758393"))))
+      (let ((products (gethash "products" result)))
+        (ok (= (length products) 2))
+        (ok (= (gethash "sku" (aref products 0)) 738594937))
+        (ok (= (gethash "sku" (aref products 1)) 284758393)))))
+
+  (testing "Nested array of tables"
+    (let ((result (tomlex:parse (format nil "[[fruit]]~%name = \"apple\"~%~%[[fruit.variety]]~%name = \"red delicious\"~%~%[[fruit.variety]]~%name = \"granny smith\""))))
+      (let* ((fruit (gethash "fruit" result))
+             (fruit-0 (aref fruit 0))
+             (varieties (gethash "variety" fruit-0)))
+        (ok (vectorp fruit))
+        (ok (= (length fruit) 1))
+        (ok (string= (gethash "name" fruit-0) "apple"))
+        (ok (vectorp varieties))
+        (ok (= (length varieties) 2))
+        (ok (string= (gethash "name" (aref varieties 0)) "red delicious"))
+        (ok (string= (gethash "name" (aref varieties 1)) "granny smith"))))))
