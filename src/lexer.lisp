@@ -260,16 +260,28 @@
             ((char= ch #\\)
              (advance lexer) ;; Skip backslash
              ;; Line-ending backslash in multi-line strings
+             ;; Can have whitespace before the newline
              (if (and is-multiline
-                      (not (at-end-p lexer))
-                      (char= (current-char lexer) #\Newline))
-                 (progn
-                   (advance lexer) ;; Skip newline
-                   ;; Skip whitespace at beginning of next line
+                      (not (at-end-p lexer)))
+                 (let ((saved-pos (lexer-position lexer)))
+                   ;; Try to skip whitespace until newline
                    (loop while (and (not (at-end-p lexer))
-                                    (member (current-char lexer) '(#\Space #\Tab #\Newline #\Return)))
-                         do (advance lexer)))
-                 ;; Regular escape sequence
+                                    (member (current-char lexer) '(#\Space #\Tab)))
+                         do (advance lexer))
+                   ;; Check if we found a newline
+                   (if (and (not (at-end-p lexer))
+                            (char= (current-char lexer) #\Newline))
+                       (progn
+                         (advance lexer) ;; Skip newline
+                         ;; Skip whitespace at beginning of next line
+                         (loop while (and (not (at-end-p lexer))
+                                          (member (current-char lexer) '(#\Space #\Tab #\Newline #\Return)))
+                               do (advance lexer)))
+                       ;; Not a line-ending backslash, restore position and parse escape
+                       (progn
+                         (setf (lexer-position lexer) saved-pos)
+                         (push (lex-escape-sequence lexer) chars))))
+                 ;; Regular escape sequence (not multiline)
                  (push (lex-escape-sequence lexer) chars)))
 
             ;; Newline in single-line string is error
@@ -589,26 +601,33 @@
 
         ;; Number or bare key (if parsing fails and it looks like a key)
         (t
-         (handler-case
-             (let ((value (parse-number-string text)))
-               (make-token :type (if (integerp value) :integer :float)
-                           :value value
-                           :line line
-                           :column col))
-           (error (e)
-             ;; If number parsing fails and text looks like a bare key, continue collecting
-             ;; Bare keys can contain alphanumeric, -, and _
-             (if (every (lambda (c) (or (alphanumericp c) (char= c #\-) (char= c #\_))) text)
-                 (progn
-                   ;; Continue collecting remaining bare key characters
-                   (loop while (and (not (at-end-p lexer))
-                                    (or (alphanumericp (current-char lexer))
-                                        (char= (current-char lexer) #\_)
-                                        (char= (current-char lexer) #\-)))
-                         do (push (advance lexer) chars))
-                   (let ((full-text (coerce (nreverse chars) 'string)))
-                     (make-token :type :bare-key :value full-text :line line :column col)))
-                 (error 'types:toml-parse-error
-                        :message (format nil "Invalid number format: ~A (~A)" text e)
-                        :line line
-                        :column col)))))))))
+         ;; Check if there are more bare-key characters after the collected text
+         ;; If so, this is a bare key like "1key", not a number
+         (if (and (not (at-end-p lexer))
+                  (or (alpha-char-p (current-char lexer))
+                      (char= (current-char lexer) #\_)))
+             ;; Continue collecting as bare key
+             (progn
+               (loop while (and (not (at-end-p lexer))
+                                (or (alphanumericp (current-char lexer))
+                                    (char= (current-char lexer) #\_)
+                                    (char= (current-char lexer) #\-)))
+                     do (push (advance lexer) chars))
+               (let ((full-text (coerce (nreverse chars) 'string)))
+                 (make-token :type :bare-key :value full-text :line line :column col)))
+             ;; Try to parse as number
+             (handler-case
+                 (let ((value (parse-number-string text)))
+                   (make-token :type (if (integerp value) :integer :float)
+                               :value value
+                               :line line
+                               :column col))
+               (error (e)
+                 ;; If number parsing fails and text looks like a bare key, return as bare key
+                 ;; Bare keys can contain alphanumeric, -, and _
+                 (if (every (lambda (c) (or (alphanumericp c) (char= c #\-) (char= c #\_))) text)
+                     (make-token :type :bare-key :value text :line line :column col)
+                     (error 'types:toml-parse-error
+                            :message (format nil "Invalid number format: ~A (~A)" text e)
+                            :line line
+                            :column col))))))))))
