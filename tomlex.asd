@@ -20,5 +20,6 @@
   :pathname "tests"
   :serial t
   :components
-  ((:file "suite"))
+  ((:file "lexer")
+   (:file "suite"))
   :perform (test-op (o c) (symbol-call :rove '#:run :tomlex/tests)))
