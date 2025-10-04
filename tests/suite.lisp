@@ -66,6 +66,16 @@
 (defun compare-toml-structures (expected actual)
   "Recursively compare expected JSON structure with actual parsed TOML."
   (cond
+    ;; Expected is a typed value (from JSON {"type": "...", "value": "..."})
+    ;; Check this FIRST before general hash table check
+    ((and (hash-table-p expected)
+          (= (hash-table-count expected) 2)
+          (gethash "type" expected)
+          (gethash "value" expected))
+     (let ((expected-type (parse-toml-type (gethash "type" expected)))
+           (expected-value (gethash "value" expected)))
+       (toml-value-equal expected-value actual expected-type)))
+
     ;; Expected is a hash table (TOML table)
     ((hash-table-p expected)
      (unless (hash-table-p actual)
@@ -85,14 +95,6 @@
        (return-from compare-toml-structures nil))
      (loop for i from 0 below (length expected)
            always (compare-toml-structures (aref expected i) (aref actual i))))
-
-    ;; Expected is a typed value (from JSON {"type": "...", "value": "..."})
-    ((and (hash-table-p expected)
-          (gethash "type" expected)
-          (gethash "value" expected))
-     (let ((expected-type (parse-toml-type (gethash "type" expected)))
-           (expected-value (gethash "value" expected)))
-       (toml-value-equal expected-value actual expected-type)))
 
     ;; Direct comparison
     (t (equal expected actual))))
