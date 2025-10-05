@@ -389,11 +389,50 @@
 
       (values key-path is-array-table))))
 
+(defun navigate-table-header (state key-path)
+  "Navigate to table specified by header [key-path].
+   Handles array-of-tables in the path by navigating to last elements.
+   This is used for [table.header] sections, NOT for key-value pairs."
+  (loop with table = (parser-state-result state)
+        for key in key-path
+        for i from 1
+        for path-so-far = (subseq key-path 0 i)
+        for path-str = (format nil "~{~A~^.~}" path-so-far)
+        for is-array-table = (gethash path-str (parser-state-array-table-paths state))
+        for existing = (gethash key table)
+        do (cond
+             ;; This path is an array-table that already exists
+             ;; Navigate into the last element of the array
+             (is-array-table
+              (unless (vectorp existing)
+                (error 'types:toml-parse-error
+                       :message (format nil "Expected array at ~A" key)))
+              (when (zerop (length existing))
+                (error 'types:toml-parse-error
+                       :message (format nil "Cannot navigate into empty array ~A" key)))
+              (setf table (aref existing (1- (length existing)))))
+
+             ;; Regular table exists - navigate into it
+             ((hash-table-p existing)
+              (setf table existing))
+
+             ;; Need to create new table
+             ((null existing)
+              (let ((new-table (make-hash-table :test 'equal)))
+                (setf (gethash key table) new-table)
+                (setf table new-table)))
+
+             ;; Error: key exists but is wrong type (not table or array)
+             (t
+              (error 'types:toml-parse-error
+                     :message (format nil "Cannot redefine ~A as table" key))))
+        finally (return table)))
+
 (defun set-current-table (state key-path)
   "Set the current table context for subsequent key-value pairs"
   (setf (parser-state-current-table-path state) key-path)
-  ;; Ensure the table exists
-  (get-or-create-table (parser-state-result state) key-path))
+  ;; Use array-aware navigation for table headers
+  (navigate-table-header state key-path))
 
 (defun set-current-array-table (state key-path)
   "Set current context to a new element in an array of tables"
@@ -443,32 +482,37 @@
         (vector-push-extend new-table array)
         new-table))))
 
+(defun path-has-array-table-prefix (path array-table-paths)
+  "Check if any prefix of path is an array-table"
+  (loop for i from 1 to (length path)
+        for prefix = (subseq path 0 i)
+        for prefix-str = (format nil "~{~A~^.~}" prefix)
+        when (gethash prefix-str array-table-paths)
+        return t))
+
 (defun get-current-table (state)
   "Get the current table for key-value assignments"
   (if (null (parser-state-current-table-path state))
       (parser-state-result state)
       (let ((path (parser-state-current-table-path state)))
-        ;; Check if this is an array table path
-        (if (gethash (format nil "~{~A~^.~}" path)
-                     (parser-state-array-table-paths state))
-            ;; Return the last element of the array
+        ;; Check if this path or any of its prefixes is an array table
+        (if (path-has-array-table-prefix path (parser-state-array-table-paths state))
+            ;; Navigate through the path, handling array tables
             ;; For nested arrays like [[fruit.variety]], we need to navigate through parent arrays
-            (let* ((table (parser-state-result state))
-                   (i 0))
-              (loop for key in path
-                    do (progn
-                         (incf i)
-                         (let ((path-so-far (subseq path 0 i)))
-                           (if (gethash (format nil "~{~A~^.~}" path-so-far)
-                                       (parser-state-array-table-paths state))
-                               ;; This level is an array table - get last element
-                               (let ((array (gethash key table)))
-                                 (when (and array (vectorp array) (> (length array) 0))
-                                   (setf table (aref array (1- (length array))))))
-                               ;; Regular table - navigate normally
-                               (setf table (gethash key table))))))
-              table)
-            ;; Regular table
+            (loop with table = (parser-state-result state)
+                  for key in path
+                  for i from 1
+                  for path-so-far = (subseq path 0 i)
+                  do (if (gethash (format nil "~{~A~^.~}" path-so-far)
+                                  (parser-state-array-table-paths state))
+                         ;; This level is an array table - get last element
+                         (let ((array (gethash key table)))
+                           (when (and array (vectorp array) (> (length array) 0))
+                             (setf table (aref array (1- (length array))))))
+                         ;; Regular table - navigate normally
+                         (setf table (gethash key table)))
+                  finally (return table))
+            ;; Regular table - no arrays in path
             (get-or-create-table (parser-state-result state) path)))))
 
 ;;; Main Parser Entry Points

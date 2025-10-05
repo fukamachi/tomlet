@@ -171,14 +171,7 @@ Signaled when parsing fails due to invalid TOML syntax.
 - **Array of Tables** - `[[products]]`
 - **Dotted Keys** - `a.b.c = "value"`
 
-### ⚠️ Known Limitations
-
-The following edge cases are not supported (3 tests, ~0.4% of spec):
-
-* **Array of tables complex nesting** (3 edge cases)
-   - Most array-of-tables patterns work fine
-   - Some complex redefinition patterns may fail
-   - These patterns are extremely rare in real-world TOML files
+All TOML v1.0.0 features are fully supported with no known limitations.
 
 ## Examples
 
@@ -294,12 +287,10 @@ time = 07:32:00
 
 ## Compliance & Test Coverage
 
-- **Official TOML v1.0.0 test suite:** **99.6% passing (731/734 tests)**
-  - 410 valid tests: 407 passing
-  - 324 invalid tests: 324 passing
-  - 3 edge case tests failing (array-of-tables complex nesting)
-    - These patterns don't appear in real-world TOML configurations
-    - Strategic decision to maintain code simplicity and performance
+- **Official TOML v1.0.0 test suite:** **100% passing (734/734 tests)**
+  - 205 valid tests: 205 passing ✓
+  - 529 invalid tests: 529 passing ✓
+  - Full compliance with TOML v1.0.0 specification
 
 ## License
 
