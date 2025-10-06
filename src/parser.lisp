@@ -208,9 +208,7 @@
 
 (defun mark-inline-table (state base-path table)
   "Recursively mark a table and all its nested tables as inline tables"
-  (setf (gethash (format nil "~{~A~^.~}" base-path)
-                 (parser-state-inline-table-paths state))
-        t)
+  (setf (gethash base-path (parser-state-inline-table-paths state)) t)
   (loop for key being the hash-keys of table using (hash-value value)
         when (hash-table-p value)
         do (mark-inline-table state (append base-path (list key)) value)))
@@ -241,17 +239,16 @@
                     (error 'types:toml-parse-error
                            :message (format nil "Duplicate key in inline table: ~A" key)))
                   (setf (gethash key table) value)
-                  (setf (gethash key defined-keys) t)))
+                  (setf (gethash key-path defined-keys) t)))
               ;; Dotted key - create nested tables
               (let* ((parent-keys (butlast key-path))
                      (final-key (car (last key-path))))
                 ;; Check if any prefix of this dotted key was already defined as a value
                 (loop for keys-tail on key-path
                       for prefix = (ldiff key-path (rest keys-tail))
-                      for prefix-str = (format nil "~{~A~^.~}" prefix)
-                      when (gethash prefix-str defined-keys)
+                      when (gethash prefix defined-keys)
                       do (error 'types:toml-parse-error
-                                :message (format nil "Cannot extend key ~A which was already defined in inline table" prefix-str)))
+                                :message (format nil "Cannot extend key ~{~A~^.~} which was already defined in inline table" prefix)))
 
                 (let ((parent-table (get-or-create-table table parent-keys)))
                   (multiple-value-bind (existing key-exists-p)
@@ -261,7 +258,7 @@
                       (error 'types:toml-parse-error
                              :message (format nil "Duplicate key in inline table: ~A" (format nil "~{~A~^.~}" key-path))))
                     (setf (gethash final-key parent-table) value)
-                    (setf (gethash (format nil "~{~A~^.~}" key-path) defined-keys) t)))))))
+                    (setf (gethash key-path defined-keys) t)))))))
 
       (let ((token (current-token state)))
         (unless token
@@ -439,23 +436,20 @@
             ;; Check if any intermediate path was explicitly defined with [table] header
             (loop for keys-tail on parent-keys
                   for sub-path = (append base-path (ldiff parent-keys (rest keys-tail)))
-                  for path-str = (format nil "~{~A~^.~}" sub-path)
-                  when (gethash path-str (parser-state-explicit-table-paths state))
+                  when (gethash sub-path (parser-state-explicit-table-paths state))
                   do (error 'types:toml-parse-error
-                            :message (format nil "Cannot extend table [~A] via dotted keys" path-str)))
+                            :message (format nil "Cannot extend table [~{~A~^.~}] via dotted keys" sub-path)))
             ;; Check if any intermediate path is an inline table (immutable)
             (loop for keys-tail on parent-keys
                   for sub-path = (append base-path (ldiff parent-keys (rest keys-tail)))
-                  for path-str = (format nil "~{~A~^.~}" sub-path)
-                  when (gethash path-str (parser-state-inline-table-paths state))
+                  when (gethash sub-path (parser-state-inline-table-paths state))
                   do (error 'types:toml-parse-error
-                            :message (format nil "Cannot extend inline table ~A" path-str)))
+                            :message (format nil "Cannot extend inline table ~{~A~^.~}" sub-path)))
             (let ((parent-table (get-or-create-table current-table parent-keys)))
               ;; Mark all intermediate paths as created via dotted keys
               (loop for keys-tail on parent-keys
                     for sub-path = (append base-path (ldiff parent-keys (rest keys-tail)))
-                    for path-str = (format nil "~{~A~^.~}" sub-path)
-                    do (setf (gethash path-str (parser-state-dotted-key-paths state)) t))
+                    do (setf (gethash sub-path (parser-state-dotted-key-paths state)) t))
               (multiple-value-bind (existing key-exists-p)
                   (gethash final-key parent-table)
                 (declare (ignore existing))
@@ -524,13 +518,12 @@
         for keys-tail on key-path
         for key = (first keys-tail)
         for path-so-far = (ldiff key-path (rest keys-tail))
-        for path-str = (format nil "~{~A~^.~}" path-so-far)
-        for is-array-table = (gethash path-str (parser-state-array-table-paths state))
-        for is-inline-table = (gethash path-str (parser-state-inline-table-paths state))
+        for is-array-table = (gethash path-so-far (parser-state-array-table-paths state))
+        for is-inline-table = (gethash path-so-far (parser-state-inline-table-paths state))
         for existing = (gethash key table)
         do (when is-inline-table
              (error 'types:toml-parse-error
-                    :message (format nil "Cannot extend inline table ~A" path-str)))
+                    :message (format nil "Cannot extend inline table ~{~A~^.~}" path-so-far)))
            (cond
              ;; This path is an array-table that already exists
              ;; Navigate into the last element of the array
@@ -561,50 +554,46 @@
 
 (defun set-current-table (state key-path)
   "Set the current table context for subsequent key-value pairs"
-  (let ((path-str (format nil "~{~A~^.~}" key-path)))
-    ;; Check if this table was already created via dotted keys
-    (when (gethash path-str (parser-state-dotted-key-paths state))
-      (error 'types:toml-parse-error
-             :message (format nil "Cannot define table [~A] after it was created via dotted keys" path-str)))
+  ;; Check if this table was already created via dotted keys
+  (when (gethash key-path (parser-state-dotted-key-paths state))
+    (error 'types:toml-parse-error
+           :message (format nil "Cannot define table [~{~A~^.~}] after it was created via dotted keys" key-path)))
 
-    ;; Check if this table is an array-of-tables
-    (when (gethash path-str (parser-state-array-table-paths state))
-      (error 'types:toml-parse-error
-             :message (format nil "Cannot redefine array-of-tables [[~A]] as regular table" path-str)))
+  ;; Check if this table is an array-of-tables
+  (when (gethash key-path (parser-state-array-table-paths state))
+    (error 'types:toml-parse-error
+           :message (format nil "Cannot redefine array-of-tables [[~{~A~^.~}]] as regular table" key-path)))
 
-    ;; Check if this table was already explicitly defined with [table] header
-    (when (gethash path-str (parser-state-explicit-table-paths state))
-      (error 'types:toml-parse-error
-             :message (format nil "Cannot redefine table [~A]" path-str)))
+  ;; Check if this table was already explicitly defined with [table] header
+  (when (gethash key-path (parser-state-explicit-table-paths state))
+    (error 'types:toml-parse-error
+           :message (format nil "Cannot redefine table [~{~A~^.~}]" key-path)))
 
-    ;; Mark this table as explicitly defined
-    (setf (gethash path-str (parser-state-explicit-table-paths state)) t)
+  ;; Mark this table as explicitly defined
+  (setf (gethash key-path (parser-state-explicit-table-paths state)) t)
 
-    (setf (parser-state-current-table-path state) key-path)
-    ;; Use array-aware navigation for table headers
-    (navigate-table-header state key-path)))
+  (setf (parser-state-current-table-path state) key-path)
+  ;; Use array-aware navigation for table headers
+  (navigate-table-header state key-path))
 
 (defun set-current-array-table (state key-path)
   "Set current context to a new element in an array of tables"
   (setf (parser-state-current-table-path state) key-path)
 
   ;; Mark this path as an array table
-  (let ((path-str (format nil "~{~A~^.~}" key-path)))
-    (setf (gethash path-str (parser-state-array-table-paths state)) t)
+  (setf (gethash key-path (parser-state-array-table-paths state)) t)
 
-    ;; Clear explicit-table-paths and dotted-key-paths for descendants of this array table
-    ;; Each [[array]] element creates a fresh scope for sub-tables
-    (let ((prefix-len (1+ (length path-str))))  ; +1 for the dot
-      (loop for key being the hash-keys of (parser-state-explicit-table-paths state)
-            when (and (> (length key) prefix-len)
-                      (string= path-str key :end2 (length path-str))
-                      (char= (char key (length path-str)) #\.))
-            do (remhash key (parser-state-explicit-table-paths state)))
-      (loop for key being the hash-keys of (parser-state-dotted-key-paths state)
-            when (and (> (length key) prefix-len)
-                      (string= path-str key :end2 (length path-str))
-                      (char= (char key (length path-str)) #\.))
-            do (remhash key (parser-state-dotted-key-paths state)))))
+  ;; Clear explicit-table-paths and dotted-key-paths for descendants of this array table
+  ;; Each [[array]] element creates a fresh scope for sub-tables
+  (let ((path-len (length key-path)))
+    (loop for key being the hash-keys of (parser-state-explicit-table-paths state)
+          when (and (> (length key) path-len)
+                    (equal (subseq key 0 path-len) key-path))  ; key starts with key-path
+          do (remhash key (parser-state-explicit-table-paths state)))
+    (loop for key being the hash-keys of (parser-state-dotted-key-paths state)
+          when (and (> (length key) path-len)
+                    (equal (subseq key 0 path-len) key-path))  ; key starts with key-path
+          do (remhash key (parser-state-dotted-key-paths state))))
 
   ;; Navigate to the parent table (if any)
   ;; For nested array tables like [[fruit.variety]], we need to get the last
@@ -612,7 +601,7 @@
   (let ((parent-table (if (> (length key-path) 1)
                           (let ((parent-path (butlast key-path)))
                             ;; Check if parent is an array table
-                            (if (gethash (format nil "~{~A~^.~}" parent-path)
+                            (if (gethash parent-path
                                         (parser-state-array-table-paths state))
                                 ;; Parent is an array table - get last element
                                 (let ((parent-parent (if (> (length parent-path) 1)
@@ -653,8 +642,7 @@
   "Check if any prefix of path is an array-table"
   (loop for path-tail on path
         for prefix = (ldiff path (rest path-tail))
-        for prefix-str = (format nil "~{~A~^.~}" prefix)
-        when (gethash prefix-str array-table-paths)
+        when (gethash prefix array-table-paths)
         return t))
 
 (defun get-current-table (state)
@@ -670,7 +658,7 @@
                   for path-tail on path
                   for key = (first path-tail)
                   for path-so-far = (ldiff path (rest path-tail))
-                  do (if (gethash (format nil "~{~A~^.~}" path-so-far)
+                  do (if (gethash path-so-far
                                   (parser-state-array-table-paths state))
                          ;; This level is an array table - get last element
                          (let ((array (gethash key table)))

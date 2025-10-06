@@ -171,9 +171,22 @@
       ch)))
 
 (defun skip-whitespace (lexer)
-  "Skip whitespace characters (space, tab, carriage return) but not newlines"
+  "Skip whitespace characters (space, tab) but not newlines.
+   CR is only allowed as part of CRLF sequence."
   (loop while (and (not (at-end-p lexer))
-                   (member (current-char lexer) '(#\Space #\Tab #\Return)))
+                   (let ((ch (current-char lexer)))
+                     (cond
+                       ((or (char= ch #\Space) (char= ch #\Tab)) t)
+                       ;; CR is only valid if followed by LF
+                       ((char= ch #\Return)
+                        (if (and (< (1+ (lexer-position lexer)) (length (lexer-input lexer)))
+                                 (char= (char (lexer-input lexer) (1+ (lexer-position lexer))) #\Newline))
+                            t  ; Valid CRLF, skip the CR
+                            (error 'types:toml-parse-error
+                                   :message "Bare carriage return (CR) not allowed; use CRLF or LF"
+                                   :line (lexer-line lexer)
+                                   :column (lexer-column lexer))))
+                       (t nil))))
         do (advance lexer)))
 
 (defun is-control-char-p (ch)
@@ -184,18 +197,29 @@
              (= code 127)))))  ; DEL (U+007F)
 
 (defun skip-comment (lexer)
-  "Skip from # to end of line, validating no control characters"
+  "Skip from # to end of line, validating no control characters.
+   CR is only allowed as part of CRLF line ending."
   (loop while (and (not (at-end-p lexer))
                    (not (char= (current-char lexer) #\Newline)))
         do (let ((ch (current-char lexer)))
-             ;; Control characters not allowed in comments (except tab)
-             (when (is-control-char-p ch)
-               (error 'types:toml-parse-error
-                      :message (format nil "Control character U+~4,'0X not allowed in comment"
-                                       (char-code ch))
-                      :line (lexer-line lexer)
-                      :column (lexer-column lexer)))
-             (advance lexer))))
+             (cond
+               ;; CR is only valid if followed by LF (CRLF)
+               ((char= ch #\Return)
+                (if (and (< (1+ (lexer-position lexer)) (length (lexer-input lexer)))
+                         (char= (char (lexer-input lexer) (1+ (lexer-position lexer))) #\Newline))
+                    (return)  ; Valid CRLF, stop here (don't advance past CR)
+                    (error 'types:toml-parse-error
+                           :message "Bare carriage return (CR) not allowed in comment"
+                           :line (lexer-line lexer)
+                           :column (lexer-column lexer))))
+               ;; Other control characters not allowed (except tab)
+               ((is-control-char-p ch)
+                (error 'types:toml-parse-error
+                       :message (format nil "Control character U+~4,'0X not allowed in comment"
+                                        (char-code ch))
+                       :line (lexer-line lexer)
+                       :column (lexer-column lexer)))
+               (t (advance lexer))))))
 
 ;;; String lexing with escape sequences
 
