@@ -17,7 +17,8 @@
   :description "Test suite for tomlet"
   :depends-on ("tomlet"
                "rove"
-               "com.inuoe.jzon")
+               #+ecl "yason"
+               #-ecl "com.inuoe.jzon")
   :pathname "tests"
   :serial t
   :components

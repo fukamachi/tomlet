@@ -146,9 +146,10 @@
       (ok (string= (lexer:token-value (first tokens)) "A"))))
 
   (testing "Unicode escape \\U"
-    #+abcl
-    (skip "ABCL has char-code-limit of 65536 (16-bit, BMP only) and cannot represent U+1F4A9")
-    #-abcl
+    #+(or abcl ecl)
+    (skip #+(or abcl ecl) (format nil "~A cannot handle codepoints >U+FFFF (U+1F4A9)"
+                                   #+abcl "ABCL" #+ecl "ECL"))
+    #-(or abcl ecl)
     (let ((tokens (lexer:lex "\"\\U0001F4A9\"")))
       (ok (= (char-code (char (lexer:token-value (first tokens)) 0)) #x1F4A9))))
 

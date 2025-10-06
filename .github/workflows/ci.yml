@@ -32,7 +32,9 @@ jobs:
           echo "$HOME/.roswell/bin" >> $GITHUB_PATH
 
       - name: Install dependencies
-        run: qlot install
+        run: |
+          qlot install --no-deps
+          qlot exec ros -e '(ql:quickload :tomlet/tests)'
 
       - name: Run tests
         run: |

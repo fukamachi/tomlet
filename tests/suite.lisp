@@ -129,16 +129,24 @@
 (defun run-valid-test (test-path)
   "Run a single valid test case."
   #+abcl
-  ;; ABCL has char-code-limit of 65536 (16-bit, BMP only) and cannot
-  ;; represent Unicode codepoints beyond U+FFFF (e.g., emoji, supplementary planes)
+  ;; ABCL: char-code-limit of 65536 (16-bit, BMP only)
   (when (or (search "quoted-unicode" test-path)
             (search "multibyte-escape" test-path))
-    (skip (format nil "~A: skipped on ABCL (16-bit char-code-limit, cannot represent >U+FFFF)" test-path))
+    (skip (format nil "~A: skipped on ABCL (16-bit char-code-limit)" test-path))
+    (return-from run-valid-test))
+  #+ecl
+  ;; ECL: STREAM-DECODING-ERROR when reading files with high codepoints
+  (when (search "comment/nonascii" test-path)
+    (skip (format nil "~A: skipped on ECL (cannot handle codepoints >U+FFFF)" test-path))
     (return-from run-valid-test))
   (let* ((toml-file (merge-pathnames test-path *test-dir*))
          (json-file (merge-pathnames (uiop:strcat (subseq test-path 0 (- (length test-path) 5)) ".json")
                                      *test-dir*))
          (toml-content (uiop:read-file-string toml-file))
+         #+ecl
+         (expected-json (let ((yason:*parse-json-arrays-as-vectors* t))
+                          (yason:parse (uiop:read-file-string json-file))))
+         #-ecl
          (expected-json (com.inuoe.jzon:parse (uiop:read-file-string json-file)))
          (expected (json-to-toml-expected expected-json)))
     (let ((actual (tomlet:parse toml-content)))
@@ -159,7 +167,7 @@
                            (uiop:read-file-string toml-file)
                          (error ()
                            ;; File read error (e.g., UTF-8 decode error) counts as invalid
-                           (pass (format nil "~A: correctly rejected (file read error)" test-path))
+                           (ok t (format nil "~A: correctly rejected (file read error)" test-path))
                            (return-from run-invalid-test)))))
     (ok (signals (tomlet:parse toml-content) 'tomlet:toml-error)
         (format nil "~A: signals toml-error" test-path))))
