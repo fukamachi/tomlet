@@ -1,0 +1,38 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    name: Test on ${{ matrix.lisp }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        lisp: [sbcl-bin]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Roswell
+        env:
+          LISP: ${{ matrix.lisp }}
+        run: |
+          curl -L https://raw.githubusercontent.com/roswell/roswell/master/scripts/install-for-ci.sh | sh
+
+      - name: Install Ultralisp
+        run: ros -e '(ql-dist:install-dist "http://dist.ultralisp.org/" :prompt nil)'
+
+      - name: Install Qlot
+        run: |
+          ros install qlot
+          echo "$HOME/.roswell/bin" >> $GITHUB_PATH
+
+      - name: Install dependencies
+        run: qlot install
+
+      - name: Run tests
+        run: |
+          .qlot/bin/rove tomlet.asd
