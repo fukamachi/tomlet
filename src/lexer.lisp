@@ -348,8 +348,9 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
                     :line line
                     :column col))
 
-            ;; Control characters not allowed in strings (except tab, which is checked above)
-            ((is-control-char-p ch)
+            ;; Control characters not allowed in strings (except tab and newlines in multiline strings)
+            ((and (is-control-char-p ch)
+                  (not (and is-multiline (char= ch #\Newline))))
              (error 'types:toml-parse-error
                     :message (format nil "Control character U+~4,'0X not allowed in string"
                                      (char-code ch))
@@ -422,8 +423,9 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
                     :line line
                     :column col))
 
-            ;; Control characters not allowed in literal strings (except tab)
-            ((is-control-char-p ch)
+            ;; Control characters not allowed in literal strings (except tab and newlines in multiline strings)
+            ((and (is-control-char-p ch)
+                  (not (and is-multiline (char= ch #\Newline))))
              (error 'types:toml-parse-error
                     :message (format nil "Control character U+~4,'0X not allowed in literal string"
                                      (char-code ch))
@@ -486,132 +488,129 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
 
 ;;; Number and datetime lexing
 
-(defun split-datetime (text)
-  "Split datetime string on T, t, or space separator. Returns (date-part time-part)"
-  (let ((sep-pos (or (position #\T text)
-                     (position #\t text)
-                     (position #\Space text))))
-    (if sep-pos
-        (list (subseq text 0 sep-pos)
-              (subseq text (1+ sep-pos)))
-        (list text nil))))
-
-(defun parse-datetime-string (text)
-  "Parse a datetime string into appropriate struct"
-  (cond
-    ;; Offset datetime: YYYY-MM-DD(T| )HH:MM:SS+HH:MM or with Z
-    ;; Check for Z, +, or - in the time portion (after T/space)
-    ((and (or (find #\T text) (find #\t text) (find #\Space text))
-          (find #\: text)
-          (let* ((parts (split-datetime text))
-                 (time-part (second parts)))
-            (and time-part
-                 (or (find #\Z time-part)
-                     (find #\z time-part)
-                     (find #\+ time-part)
-                     ;; - in time part (offset), not in date part
-                     (and (find #\- time-part)
-                          ;; Make sure it's not just a negative time (check it's after position 2)
-                          (> (position #\- time-part :from-end t) 2))))))
-     (let* ((date-time-parts (split-datetime text))
-            (date-part (first date-time-parts))
-            (time-offset-part (second date-time-parts))
-            (date-components (mapcar #'parse-integer (uiop:split-string date-part :separator "-")))
-            ;; Find offset marker from right (after seconds/fraction)
-            (offset-pos (position-if (lambda (c) (member c '(#\+ #\- #\Z #\z)))
-                                     time-offset-part
-                                     :from-end t
-                                     :start 2))  ; Skip first 2 chars (HH)
-            (time-str (if offset-pos
-                         (subseq time-offset-part 0 offset-pos)
-                         time-offset-part))
-            (offset-str (if offset-pos
-                           (subseq time-offset-part offset-pos)
-                           ""))
-            (time-components (parse-time-components time-str))
-            (offset (if (string= offset-str "")
-                       0
-                       (if (or (string= offset-str "Z") (string= offset-str "z"))
-                           0
-                           (parse-timezone-offset offset-str)))))
-       (types:make-offset-datetime
-        :year (first date-components)
-        :month (second date-components)
-        :day (third date-components)
-        :hour (first time-components)
-        :minute (second time-components)
-        :second (third time-components)
-        :nanosecond (fourth time-components)
-        :offset offset)))
-
-    ;; Local datetime: YYYY-MM-DD(T| )HH:MM:SS
-    ((and (or (find #\T text) (find #\t text) (find #\Space text))
-          (find #\: text))
-     (let* ((date-time-parts (split-datetime text))
-            (date-part (first date-time-parts))
-            (time-part (second date-time-parts))
-            (date-components (mapcar #'parse-integer (uiop:split-string date-part :separator "-")))
-            (time-components (parse-time-components time-part)))
-       (types:make-local-datetime
-        :year (first date-components)
-        :month (second date-components)
-        :day (third date-components)
-        :hour (first time-components)
-        :minute (second time-components)
-        :second (third time-components)
-        :nanosecond (fourth time-components))))
-
-    ;; Local date: YYYY-MM-DD
-    ((and (find #\- text) (not (find #\: text)))
-     (let ((components (mapcar #'parse-integer (uiop:split-string text :separator "-"))))
-       (types:make-local-date
-        :year (first components)
-        :month (second components)
-        :day (third components))))
-
-    ;; Local time: HH:MM:SS
-    ((and (find #\: text) (not (find #\- text)) (not (find #\T text)))
-     (let ((components (parse-time-components text)))
-       (types:make-local-time
-        :hour (first components)
-        :minute (second components)
-        :second (third components)
-        :nanosecond (fourth components))))
-
-    (t
-     (error 'types:toml-parse-error
-            :message (format nil "Invalid datetime format: ~A" text)))))
-
-(defun parse-time-components (time-str)
-  "Parse HH:MM:SS[.fraction] into (hour minute second nanosecond)"
-  (let* ((has-fraction (find #\. time-str))
-         (main-part (if has-fraction
-                       (subseq time-str 0 (position #\. time-str))
-                       time-str))
-         (fraction-part (if has-fraction
-                           (subseq time-str (1+ (position #\. time-str)))
-                           "0"))
-         (components (mapcar #'parse-integer (uiop:split-string main-part :separator ":")))
-         (nanoseconds (parse-fractional-seconds fraction-part)))
-    (list (first components)
-          (second components)
-          (third components)
-          nanoseconds)))
-
 (defun parse-fractional-seconds (frac-str)
   "Parse fractional seconds string to nanoseconds"
-  (if (string= frac-str "0")
+  (if (or (null frac-str) (string= frac-str ""))
       0
-      (let* ((padded (format nil "~A~V@{~A~:*~}" frac-str (- 9 (length frac-str)) "0")))
+      ;; Remove leading dot if present, pad to 9 digits
+      (let* ((cleaned (if (char= (char frac-str 0) #\.)
+                          (subseq frac-str 1)
+                          frac-str))
+             (padded (format nil "~A~V@{~A~:*~}" cleaned (- 9 (length cleaned)) "0")))
         (parse-integer (subseq padded 0 9)))))
 
-(defun parse-timezone-offset (offset-str)
-  "Parse timezone offset (+HH:MM or -HH:MM) to minutes"
-  (let* ((sign (if (char= (char offset-str 0) #\+) 1 -1))
-         (parts (uiop:split-string (subseq offset-str 1) :separator ":"))
-         (hours (parse-integer (first parts)))
-         (minutes (if (second parts) (parse-integer (second parts)) 0)))
-    (* sign (+ (* hours 60) minutes))))
+(defun validate-datetime-ranges (year month day hour minute second offset-hour offset-minute)
+  "Validate that datetime component values are in valid ranges"
+  ;; Month: 01-12
+  (unless (and (>= month 1) (<= month 12))
+    (error 'types:toml-parse-error
+           :message (format nil "Invalid month: ~D (must be 01-12)" month)))
+
+  ;; Day: 01-31 (basic check, more detailed below)
+  (unless (and (>= day 1) (<= day 31))
+    (error 'types:toml-parse-error
+           :message (format nil "Invalid day: ~D (must be 01-31)" day)))
+
+  ;; Days per month validation
+  (let ((days-in-month
+          (cond
+            ((member month '(1 3 5 7 8 10 12)) 31)
+            ((member month '(4 6 9 11)) 30)
+            ;; February - check for leap year
+            ((= month 2)
+             (if (or (and (= (mod year 4) 0) (/= (mod year 100) 0))
+                     (= (mod year 400) 0))
+                 29  ; Leap year
+                 28))  ; Not a leap year
+            (t 31))))
+    (unless (<= day days-in-month)
+      (error 'types:toml-parse-error
+             :message (format nil "Invalid day ~D for month ~D in year ~D" day month year))))
+
+  ;; Hour: 00-23
+  (when hour
+    (unless (and (>= hour 0) (<= hour 23))
+      (error 'types:toml-parse-error
+             :message (format nil "Invalid hour: ~D (must be 00-23)" hour))))
+
+  ;; Minute: 00-59
+  (when minute
+    (unless (and (>= minute 0) (<= minute 59))
+      (error 'types:toml-parse-error
+             :message (format nil "Invalid minute: ~D (must be 00-59)" minute))))
+
+  ;; Second: 00-60 (60 for leap seconds)
+  (when second
+    (unless (and (>= second 0) (<= second 60))
+      (error 'types:toml-parse-error
+             :message (format nil "Invalid second: ~D (must be 00-60)" second))))
+
+  ;; Offset hour: -23 to +23
+  (when offset-hour
+    (unless (and (>= offset-hour -23) (<= offset-hour 23))
+      (error 'types:toml-parse-error
+             :message (format nil "Invalid offset hour: ~D (must be -23 to +23)" offset-hour))))
+
+  ;; Offset minute: 00-59
+  (when offset-minute
+    (unless (and (>= offset-minute 0) (<= offset-minute 59))
+      (error 'types:toml-parse-error
+             :message (format nil "Invalid offset minute: ~D (must be 00-59)" offset-minute)))))
+
+(defun parse-datetime-string (text)
+  "Parse a datetime string into appropriate struct using regex matching"
+  (or
+   ;; Offset datetime: YYYY-MM-DDTHH:MM:SS(.fraction)?(Z|[+-]HH:MM)
+   (ppcre:register-groups-bind ((#'parse-integer y mon d h min s) frac offset)
+       ("^(\\d{4})-(\\d{2})-(\\d{2})[Tt ](\\d{2}):(\\d{2}):(\\d{2})(\\.\\d+)?([Zz]|[+-]\\d{2}:\\d{2})$" text)
+     (let* ((ns (parse-fractional-seconds frac))
+            (off-min (cond
+                       ((or (string= offset "Z") (string= offset "z")) 0)
+                       (t (ppcre:register-groups-bind (sign-str (#'parse-integer oh om))
+                              ("^([+-])(\\d{2}):(\\d{2})$" offset)
+                            (let ((sign (if (string= sign-str "+") 1 -1)))
+                              ;; Validate offset ranges
+                              (unless (and (>= oh 0) (<= oh 23))
+                                (error 'types:toml-parse-error
+                                       :message (format nil "Invalid offset hour: ~D" oh)))
+                              (unless (and (>= om 0) (<= om 59))
+                                (error 'types:toml-parse-error
+                                       :message (format nil "Invalid offset minute: ~D" om)))
+                              (* sign (+ (* oh 60) om))))))))
+       ;; Validate datetime ranges
+       (validate-datetime-ranges y mon d h min s
+                                (when off-min (floor (abs off-min) 60))
+                                (when off-min (mod (abs off-min) 60)))
+       (types:make-offset-datetime :year y :month mon :day d
+                                  :hour h :minute min :second s
+                                  :nanosecond ns :offset off-min)))
+
+   ;; Local datetime: YYYY-MM-DDTHH:MM:SS(.fraction)?
+   (ppcre:register-groups-bind ((#'parse-integer y mon d h min s) frac)
+       ("^(\\d{4})-(\\d{2})-(\\d{2})[Tt ](\\d{2}):(\\d{2}):(\\d{2})(\\.\\d+)?$" text)
+     (let ((ns (parse-fractional-seconds frac)))
+       (validate-datetime-ranges y mon d h min s nil nil)
+       (types:make-local-datetime :year y :month mon :day d
+                                 :hour h :minute min :second s
+                                 :nanosecond ns)))
+
+   ;; Local date: YYYY-MM-DD
+   (ppcre:register-groups-bind ((#'parse-integer y mon d))
+       ("^(\\d{4})-(\\d{2})-(\\d{2})$" text)
+     (validate-datetime-ranges y mon d nil nil nil nil nil)
+     (types:make-local-date :year y :month mon :day d))
+
+   ;; Local time: HH:MM:SS(.fraction)?
+   (ppcre:register-groups-bind ((#'parse-integer h min s) frac)
+       ("^(\\d{2}):(\\d{2}):(\\d{2})(\\.\\d+)?$" text)
+     (let ((ns (parse-fractional-seconds frac)))
+       (validate-datetime-ranges 2000 1 1 h min s nil nil)  ; Dummy date
+       (types:make-local-time :hour h :minute min :second s :nanosecond ns)))
+
+   ;; No match - invalid format
+   (error 'types:toml-parse-error
+          :message (format nil "Invalid datetime format: ~A" text))))
+
 
 (defun validate-and-clean-number (text)
   "Validate number format and return cleaned text (underscores removed).
