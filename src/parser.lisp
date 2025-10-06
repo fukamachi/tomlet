@@ -216,15 +216,24 @@
           (if (= (length key-path) 1)
               ;; Simple key
               (let ((key (first key-path)))
-                (when (nth-value 1 (gethash key table))
-                  (error 'types:toml-parse-error
-                         :message (format nil "Duplicate key in inline table: ~A" key)))
-                (setf (gethash key table) value))
+                (multiple-value-bind (existing key-exists-p)
+                    (gethash key table)
+                  (declare (ignore existing))
+                  (when key-exists-p
+                    (error 'types:toml-parse-error
+                           :message (format nil "Duplicate key in inline table: ~A" key)))
+                  (setf (gethash key table) value)))
               ;; Dotted key - create nested tables
               (let* ((parent-keys (butlast key-path))
                      (final-key (car (last key-path)))
                      (parent-table (get-or-create-table table parent-keys)))
-                (setf (gethash final-key parent-table) value)))))
+                (multiple-value-bind (existing key-exists-p)
+                    (gethash final-key parent-table)
+                  (declare (ignore existing))
+                  (when key-exists-p
+                    (error 'types:toml-parse-error
+                           :message (format nil "Duplicate key in inline table: ~A" (format nil "~{~A~^.~}" key-path))))
+                  (setf (gethash final-key parent-table) value))))))
 
       (let ((token (current-token state)))
         (unless token
@@ -346,23 +355,25 @@
   "Navigate/create nested tables for a dotted key path"
   (if (null key-path)
       table
-      (let* ((key (first key-path))
-             (existing (gethash key table)))
-        (cond
-          ;; Key exists and is a hash table - continue navigation
-          ((hash-table-p existing)
-           (get-or-create-table existing (rest key-path)))
+      (let ((key (first key-path)))
+        (multiple-value-bind (existing key-exists-p)
+            (gethash key table)
+          (cond
+            ;; Key exists and is a hash table - continue navigation
+            ((hash-table-p existing)
+             (get-or-create-table existing (rest key-path)))
 
-          ;; Key doesn't exist - create new table
-          ((null existing)
-           (let ((new-table (make-hash-table :test 'equal)))
-             (setf (gethash key table) new-table)
-             (get-or-create-table new-table (rest key-path))))
+            ;; Key doesn't exist - create new table
+            ((not key-exists-p)
+             (let ((new-table (make-hash-table :test 'equal)))
+               (setf (gethash key table) new-table)
+               (get-or-create-table new-table (rest key-path))))
 
-          ;; Key exists but isn't a table - error
-          (t
-           (error 'types:toml-parse-error
-                  :message (format nil "Cannot redefine key ~A as table" key)))))))
+            ;; Key exists but isn't a table - error
+            (t
+             (error 'types:toml-parse-error
+                    :message (format nil "Cannot redefine key ~A as table" key))))))))
+
 
 (defun parse-key-value (state)
   "Parse a key = value line (supports dotted keys)"
@@ -372,12 +383,25 @@
           (current-table (get-current-table state)))
       (if (= (length key-path) 1)
           ;; Simple key - assign to current table
-          (setf (gethash (first key-path) current-table) value)
+          (let ((key (first key-path)))
+            (multiple-value-bind (existing key-exists-p)
+                (gethash key current-table)
+              (declare (ignore existing))
+              (when key-exists-p
+                (error 'types:toml-parse-error
+                       :message (format nil "Duplicate key: ~A" key)))
+              (setf (gethash key current-table) value)))
           ;; Dotted key - navigate from current table and set final key
           (let* ((parent-keys (butlast key-path))
                  (final-key (car (last key-path)))
                  (parent-table (get-or-create-table current-table parent-keys)))
-            (setf (gethash final-key parent-table) value))))))
+            (multiple-value-bind (existing key-exists-p)
+                (gethash final-key parent-table)
+              (declare (ignore existing))
+              (when key-exists-p
+                (error 'types:toml-parse-error
+                       :message (format nil "Duplicate key: ~A" (format nil "~{~A~^.~}" key-path))))
+              (setf (gethash final-key parent-table) value)))))))
 
 ;;; Table Section Parsing
 
