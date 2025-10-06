@@ -1,5 +1,7 @@
 # tomlet
 
+[![Build Status](https://github.com/fukamachi/tomlet/workflows/CI/badge.svg)](https://github.com/fukamachi/tomlet/actions?query=workflow%3ACI)
+
 A TOML v1.0.0 parser for Common Lisp.
 
 **Features:**
@@ -334,10 +336,10 @@ This design makes tomlet ideal for:
 ## Supported Implementations
 
 - **SBCL** - Tested and fully supported
-- **Clozure CL** - Supported
+- **Clozure CL** - Tested and fully supported
+- **ABCL** - Tested and fully supported except invalid UTF-8 characters
 - **ECL** - Supported
 - **Clasp** - Supported
-- **ABCL** - Supported
 - **Allegro CL** - Supported
 - **LispWorks** - Supported
 
