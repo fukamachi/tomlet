@@ -218,7 +218,8 @@
 (defun parse-inline-table (state)
   "Parse an inline table {key = value, ...}"
   (expect-token state :left-brace :next-context :key)
-  (let ((table (make-hash-table :test 'equal)))
+  (let ((table (make-hash-table :test 'equal))
+        (defined-keys (make-hash-table :test 'equal))) ; Track keys with explicit values
     ;; Empty inline table check
     (when (and (current-token state)
                (eq (lexer:token-type (current-token state)) :right-brace))
@@ -239,18 +240,28 @@
                   (when key-exists-p
                     (error 'types:toml-parse-error
                            :message (format nil "Duplicate key in inline table: ~A" key)))
-                  (setf (gethash key table) value)))
+                  (setf (gethash key table) value)
+                  (setf (gethash key defined-keys) t)))
               ;; Dotted key - create nested tables
               (let* ((parent-keys (butlast key-path))
-                     (final-key (car (last key-path)))
-                     (parent-table (get-or-create-table table parent-keys)))
-                (multiple-value-bind (existing key-exists-p)
-                    (gethash final-key parent-table)
-                  (declare (ignore existing))
-                  (when key-exists-p
-                    (error 'types:toml-parse-error
-                           :message (format nil "Duplicate key in inline table: ~A" (format nil "~{~A~^.~}" key-path))))
-                  (setf (gethash final-key parent-table) value))))))
+                     (final-key (car (last key-path))))
+                ;; Check if any prefix of this dotted key was already defined as a value
+                (loop for keys-tail on key-path
+                      for prefix = (ldiff key-path (rest keys-tail))
+                      for prefix-str = (format nil "~{~A~^.~}" prefix)
+                      when (gethash prefix-str defined-keys)
+                      do (error 'types:toml-parse-error
+                                :message (format nil "Cannot extend key ~A which was already defined in inline table" prefix-str)))
+
+                (let ((parent-table (get-or-create-table table parent-keys)))
+                  (multiple-value-bind (existing key-exists-p)
+                      (gethash final-key parent-table)
+                    (declare (ignore existing))
+                    (when key-exists-p
+                      (error 'types:toml-parse-error
+                             :message (format nil "Duplicate key in inline table: ~A" (format nil "~{~A~^.~}" key-path))))
+                    (setf (gethash final-key parent-table) value)
+                    (setf (gethash (format nil "~{~A~^.~}" key-path) defined-keys) t)))))))
 
       (let ((token (current-token state)))
         (unless token
@@ -432,6 +443,13 @@
                   when (gethash path-str (parser-state-explicit-table-paths state))
                   do (error 'types:toml-parse-error
                             :message (format nil "Cannot extend table [~A] via dotted keys" path-str)))
+            ;; Check if any intermediate path is an inline table (immutable)
+            (loop for keys-tail on parent-keys
+                  for sub-path = (append base-path (ldiff parent-keys (rest keys-tail)))
+                  for path-str = (format nil "~{~A~^.~}" sub-path)
+                  when (gethash path-str (parser-state-inline-table-paths state))
+                  do (error 'types:toml-parse-error
+                            :message (format nil "Cannot extend inline table ~A" path-str)))
             (let ((parent-table (get-or-create-table current-table parent-keys)))
               ;; Mark all intermediate paths as created via dotted keys
               (loop for keys-tail on parent-keys
@@ -453,33 +471,50 @@
 
 (defun parse-table-header (state)
   "Parse a table header [section.name] or [[array.of.tables]]"
-  (expect-token state :left-bracket :next-context :key)
+  (let ((first-bracket (current-token state)))
+    (expect-token state :left-bracket :next-context :key)
 
-  ;; Check if this is an array of tables [[...]]
-  (let ((is-array-table nil))
-    (when (and (current-token state)
-               (eq (lexer:token-type (current-token state)) :left-bracket))
-      (setf is-array-table t)
-      (advance-token state :context :key))
+    ;; Check if this is an array of tables [[...]]
+    (let ((is-array-table nil))
+      (when (and (current-token state)
+                 (eq (lexer:token-type (current-token state)) :left-bracket))
+        ;; Validate no whitespace between brackets
+        (let ((second-bracket (current-token state)))
+          (unless (and (= (lexer:token-line first-bracket) (lexer:token-line second-bracket))
+                       (= (lexer:token-column second-bracket) (1+ (lexer:token-column first-bracket))))
+            (error 'types:toml-parse-error
+                   :message "Array-of-tables brackets [[...]] must not have whitespace between them"
+                   :line (lexer:token-line second-bracket)
+                   :column (lexer:token-column second-bracket))))
+        (setf is-array-table t)
+        (advance-token state :context :key))
 
-    (let ((key-path (parse-dotted-key state)))
-      (expect-token state :right-bracket)
+      (let ((key-path (parse-dotted-key state)))
+        (let ((first-close-bracket (current-token state)))
+          (expect-token state :right-bracket)
 
-      ;; If array table, expect another right bracket
-      (when is-array-table
-        (expect-token state :right-bracket))
+          ;; If array table, expect another right bracket with no whitespace
+          (when is-array-table
+            (let ((second-close-bracket (current-token state)))
+              (unless (and (= (lexer:token-line first-close-bracket) (lexer:token-line second-close-bracket))
+                           (= (lexer:token-column second-close-bracket) (1+ (lexer:token-column first-close-bracket))))
+                (error 'types:toml-parse-error
+                       :message "Array-of-tables brackets [[...]] must not have whitespace between them"
+                       :line (lexer:token-line second-close-bracket)
+                       :column (lexer:token-column second-close-bracket))))
+            (expect-token state :right-bracket))
 
-      ;; Enforce newline or EOF after table header
-      (let ((next-token (current-token state)))
-        (when (and next-token
-                   (not (eq (lexer:token-type next-token) :newline))
-                   (not (eq (lexer:token-type next-token) :eof)))
-          (error 'types:toml-parse-error
-                 :message "Expected newline or EOF after table header"
-                 :line (lexer:token-line next-token)
-                 :column (lexer:token-column next-token))))
+          ;; Enforce newline or EOF after table header
+          (let ((next-token (current-token state)))
+            (when (and next-token
+                       (not (eq (lexer:token-type next-token) :newline))
+                       (not (eq (lexer:token-type next-token) :eof)))
+              (error 'types:toml-parse-error
+                     :message "Expected newline or EOF after table header"
+                     :line (lexer:token-line next-token)
+                     :column (lexer:token-column next-token))))
 
-      (values key-path is-array-table))))
+          (values key-path is-array-table))))))
 
 (defun navigate-table-header (state key-path)
   "Navigate to table specified by header [key-path].
