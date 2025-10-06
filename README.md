@@ -4,7 +4,7 @@ A TOML v1.0.0 parser for Common Lisp.
 
 **Features:**
 - **TOML v1.0.0 parser** - Parses all valid TOML correctly (205/205 valid tests passing)
-- **~91% spec compliance** - Working toward 100% compliance (667/734 tests passing, actively improving)
+- **~92% spec compliance** - Working toward 100% compliance (679/734 tests passing, actively improving)
 - **Minimal dependencies** - Only cl-ppcre for robust number validation
 - **Portable** - Works across major Common Lisp implementations
 - **JSON-compatible output** - Parses TOML into hash-tables and vectors, making it easy to convert to JSON or work with existing JSON tools
@@ -331,9 +331,9 @@ not_a_num = nan
 
 ## Compliance & Test Coverage
 
-- **Official TOML v1.0.0 test suite:** **667/734 tests passing (~91%)**
+- **Official TOML v1.0.0 test suite:** **679/734 tests passing (~92%)**
   - 205 valid tests: 205 passing ✓ (100%)
-  - 529 invalid tests: 462 passing (87%)
+  - 529 invalid tests: 474 passing (90%)
   - **Status**: All valid TOML parses correctly. Working toward 100% compliance by adding validation to properly reject invalid TOML.
 
 ## JSON Compatibility

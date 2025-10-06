@@ -149,10 +149,6 @@
     (let ((tokens (lexer:lex "\"\\U0001F4A9\"")))
       (ok (= (char-code (char (lexer:token-value (first tokens)) 0)) #x1F4A9))))
 
-  (testing "Hex escape \\x"
-    (let ((tokens (lexer:lex "\"\\x41\"")))
-      (ok (string= (lexer:token-value (first tokens)) "A"))))
-
   (testing "Escape e (escape character)"
     (let ((tokens (lexer:lex "\"\\e\"")))
       (ok (= (char-code (char (lexer:token-value (first tokens)) 0)) #x1B)))))

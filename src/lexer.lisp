@@ -48,13 +48,11 @@
   "Lex a TOML string and return a list of tokens"
   (check-type input string)
   (let ((lexer (make-lexer :input input)))
-    (loop
-      with tokens = '()
-      for token = (next-token lexer)
-      while token
-      do (push token tokens)
-      until (eq (token-type token) :eof)
-      finally (return (nreverse tokens)))))
+    (loop for token = (next-token lexer)
+          while token
+          collect token into tokens
+          until (eq (token-type token) :eof)
+          finally (return tokens))))
 
 (defun lex (input)
   "Alias for lex-string"
@@ -68,8 +66,8 @@
   (skip-whitespace lexer)
   (when (at-end-p lexer)
     (return-from next-token (make-token :type :eof
-                                         :line (lexer-line lexer)
-                                         :column (lexer-column lexer))))
+                                        :line (lexer-line lexer)
+                                        :column (lexer-column lexer))))
 
   (let ((ch (current-char lexer))
         (line (lexer-line lexer))
@@ -208,28 +206,44 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
           do (incf quote-count)
              (advance lexer))
 
-    (if (>= quote-count 3)
-        ;; Found closing delimiter
-        ;; Return number of content quotes (quote-count - 3)
-        (values :closed (- quote-count 3))
-        ;; Less than 3 quotes - restore position and caller will handle them
-        (progn
-          (setf (lexer-position lexer) saved-pos)
-          (values :continue quote-count)))))
+    (cond
+      ;; More than 5 quotes is invalid (3 for closing + max 2 content)
+      ((> quote-count 5)
+       (error 'types:toml-parse-error
+              :message (format nil "Too many consecutive ~C characters in multiline string" quote-char)
+              :line (lexer-line lexer)
+              :column (lexer-column lexer)))
+      ;; 3-5 quotes: found closing delimiter
+      ((>= quote-count 3)
+       ;; Return number of content quotes (quote-count - 3)
+       (values :closed (- quote-count 3)))
+      ;; Less than 3 quotes - restore position and caller will handle them
+      (t
+       (setf (lexer-position lexer) saved-pos)
+       (values :continue quote-count)))))
 
 (defun parse-hex-escape (lexer num-digits)
-  "Parse a hex escape sequence of NUM-DIGITS hex digits"
-  (let ((hex-chars '()))
-    (dotimes (i num-digits)
-      (when (at-end-p lexer)
+  "Parse a hex escape sequence of NUM-DIGITS hex digits and validate Unicode codepoint"
+  (let ((hex-str
+          (with-output-to-string (stream)
+            (loop repeat num-digits
+                  do (when (at-end-p lexer)
+                       (error 'types:toml-parse-error
+                              :message (format nil "Incomplete hex escape sequence (expected ~D digits)" num-digits)))
+                     (let ((ch (current-char lexer)))
+                       (unless (digit-char-p ch 16)
+                         (error 'types:toml-parse-error
+                                :message (format nil "Invalid hex digit in escape sequence: ~C" ch)))
+                       (write-char (advance lexer) stream))))))
+    (let ((code (parse-integer hex-str :radix 16)))
+      ;; Validate Unicode codepoint range
+      (unless (and (>= code 0) (<= code #x10FFFF))
         (error 'types:toml-parse-error
-               :message (format nil "Incomplete hex escape sequence (expected ~D digits)" num-digits)))
-      (let ((ch (current-char lexer)))
-        (unless (or (digit-char-p ch 16))
-          (error 'types:toml-parse-error
-                 :message (format nil "Invalid hex digit in escape sequence: ~C" ch)))
-        (push (advance lexer) hex-chars)))
-    (let ((code (parse-integer (coerce (nreverse hex-chars) 'string) :radix 16)))
+               :message (format nil "Unicode escape out of range: U+~X (must be U+0000 to U+10FFFF)" code)))
+      ;; Reject Unicode surrogate pairs (U+D800 to U+DFFF)
+      (when (and (>= code #xD800) (<= code #xDFFF))
+        (error 'types:toml-parse-error
+               :message (format nil "Unicode escape is a surrogate pair: U+~X (U+D800-U+DFFF not allowed)" code)))
       (code-char code))))
 
 (defun lex-escape-sequence (lexer)
@@ -247,7 +261,6 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
       (#\" #\")
       (#\\ #\\)
       (#\e #\Escape)
-      (#\x (parse-hex-escape lexer 2))      ; \xHH
       (#\u (parse-hex-escape lexer 4))      ; \uHHHH
       (#\U (parse-hex-escape lexer 8))      ; \UHHHHHHHH
       (t (error 'types:toml-parse-error
@@ -271,100 +284,98 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
                  (char= (current-char lexer) #\Newline))
         (advance lexer)))
 
-    (let ((chars '()))
-      (loop
-        (when (at-end-p lexer)
-          (error 'types:toml-parse-error
-                 :message (if is-multiline
-                              "Unterminated multi-line string"
-                              "Unterminated string")
-                 :line line
-                 :column col))
+    (make-token :type :string
+                :value (with-output-to-string (stream)
+                         (loop
+                           (when (at-end-p lexer)
+                             (error 'types:toml-parse-error
+                                    :message (if is-multiline
+                                                 "Unterminated multi-line string"
+                                                 "Unterminated string")
+                                    :line line
+                                    :column col))
 
-        (let ((ch (current-char lexer)))
-          (cond
-            ;; Check for closing quotes
-            ((char= ch #\")
-             (if is-multiline
-                 ;; Use greedy quote counting for multiline strings
-                 (multiple-value-bind (status content-quotes)
-                     (handle-multiline-closing-quotes lexer #\")
-                   (if (eq status :closed)
-                       (progn
-                         ;; Add content quotes and close string
-                         (dotimes (i content-quotes)
-                           (push #\" chars))
-                         (return))
-                       ;; Less than 3 quotes - add them as content
-                       (dotimes (i content-quotes)
-                         (push (advance lexer) chars))))
-                 ;; Single-line string - done
-                 (progn
-                   (advance lexer)
-                   (return))))
+                           (let ((ch (current-char lexer)))
+                             (cond
+                               ;; Check for closing quotes
+                               ((char= ch #\")
+                                (if is-multiline
+                                    ;; Use greedy quote counting for multiline strings
+                                    (multiple-value-bind (status content-quotes)
+                                        (handle-multiline-closing-quotes lexer #\")
+                                      (if (eq status :closed)
+                                          (progn
+                                            ;; Add content quotes and close string
+                                            (dotimes (i content-quotes)
+                                              (write-char #\" stream))
+                                            (return))
+                                          ;; Less than 3 quotes - add them as content
+                                          (dotimes (i content-quotes)
+                                            (write-char (advance lexer) stream))))
+                                    ;; Single-line string - done
+                                    (progn
+                                      (advance lexer)
+                                      (return))))
 
-            ;; Escape sequences
-            ((char= ch #\\)
-             (advance lexer) ;; Skip backslash
-             ;; Line-ending backslash in multi-line strings
-             ;; Can have whitespace before the newline
-             (if (and is-multiline
-                      (not (at-end-p lexer)))
-                 (let ((saved-pos (lexer-position lexer)))
-                   ;; Try to skip whitespace until newline
-                   (loop while (and (not (at-end-p lexer))
-                                    (member (current-char lexer) '(#\Space #\Tab)))
-                         do (advance lexer))
-                   ;; Check if we found a newline (LF or CRLF)
-                   (if (and (not (at-end-p lexer))
-                            (or (char= (current-char lexer) #\Newline)
-                                (char= (current-char lexer) #\Return)))
-                       (progn
-                         ;; Handle CRLF: skip \r if followed by \n
-                         (when (char= (current-char lexer) #\Return)
-                           (advance lexer)
-                           (when (and (not (at-end-p lexer))
-                                      (char= (current-char lexer) #\Newline))
-                             (advance lexer)))
-                         ;; Handle LF: skip \n
-                         (when (and (not (at-end-p lexer))
-                                    (char= (current-char lexer) #\Newline))
-                           (advance lexer))
-                         ;; Skip whitespace at beginning of next line
-                         (loop while (and (not (at-end-p lexer))
-                                          (member (current-char lexer) '(#\Space #\Tab #\Newline #\Return)))
-                               do (advance lexer)))
-                       ;; Not a line-ending backslash, restore position and parse escape
-                       (progn
-                         (setf (lexer-position lexer) saved-pos)
-                         (push (lex-escape-sequence lexer) chars))))
-                 ;; Regular escape sequence (not multiline)
-                 (push (lex-escape-sequence lexer) chars)))
+                               ;; Escape sequences
+                               ((char= ch #\\)
+                                (advance lexer) ;; Skip backslash
+                                ;; Line-ending backslash in multi-line strings
+                                ;; Can have whitespace before the newline
+                                (if (and is-multiline
+                                         (not (at-end-p lexer)))
+                                    (let ((saved-pos (lexer-position lexer)))
+                                      ;; Try to skip whitespace until newline
+                                      (loop while (and (not (at-end-p lexer))
+                                                       (member (current-char lexer) '(#\Space #\Tab)))
+                                            do (advance lexer))
+                                      ;; Check if we found a newline (LF or CRLF)
+                                      (if (and (not (at-end-p lexer))
+                                               (or (char= (current-char lexer) #\Newline)
+                                                   (char= (current-char lexer) #\Return)))
+                                          (progn
+                                            ;; Handle CRLF: skip \r if followed by \n
+                                            (when (char= (current-char lexer) #\Return)
+                                              (advance lexer)
+                                              (when (and (not (at-end-p lexer))
+                                                         (char= (current-char lexer) #\Newline))
+                                                (advance lexer)))
+                                            ;; Handle LF: skip \n
+                                            (when (and (not (at-end-p lexer))
+                                                       (char= (current-char lexer) #\Newline))
+                                              (advance lexer))
+                                            ;; Skip whitespace at beginning of next line
+                                            (loop while (and (not (at-end-p lexer))
+                                                             (member (current-char lexer) '(#\Space #\Tab #\Newline #\Return)))
+                                                  do (advance lexer)))
+                                          ;; Not a line-ending backslash, restore position and parse escape
+                                          (progn
+                                            (setf (lexer-position lexer) saved-pos)
+                                            (write-char (lex-escape-sequence lexer) stream))))
+                                    ;; Regular escape sequence (not multiline)
+                                    (write-char (lex-escape-sequence lexer) stream)))
 
-            ;; Newline in single-line string is error
-            ((and (not is-multiline) (char= ch #\Newline))
-             (error 'types:toml-parse-error
-                    :message "Newline not allowed in single-line string"
-                    :line line
-                    :column col))
+                               ;; Newline in single-line string is error
+                               ((and (not is-multiline) (char= ch #\Newline))
+                                (error 'types:toml-parse-error
+                                       :message "Newline not allowed in single-line string"
+                                       :line line
+                                       :column col))
 
-            ;; Control characters not allowed in strings (except tab and newlines in multiline strings)
-            ((and (is-control-char-p ch)
-                  (not (and is-multiline (char= ch #\Newline))))
-             (error 'types:toml-parse-error
-                    :message (format nil "Control character U+~4,'0X not allowed in string"
-                                     (char-code ch))
-                    :line (lexer-line lexer)
-                    :column (lexer-column lexer)))
+                               ;; Control characters not allowed in strings (except tab and newlines in multiline strings)
+                               ((and (is-control-char-p ch)
+                                     (not (and is-multiline (char= ch #\Newline))))
+                                (error 'types:toml-parse-error
+                                       :message (format nil "Control character U+~4,'0X not allowed in string"
+                                                        (char-code ch))
+                                       :line (lexer-line lexer)
+                                       :column (lexer-column lexer)))
 
-            ;; Regular character
-            (t
-             (push (advance lexer) chars)))))
-
-      (make-token :type :string
-                  :value (coerce (nreverse chars) 'string)
-                  :line line
-                  :column col))))
+                               ;; Regular character
+                               (t
+                                (write-char (advance lexer) stream))))))
+                :line line
+                :column col)))
 
 (defun lex-literal-string-token (lexer line col)
   "Lex a literal or multi-line literal string"
@@ -384,62 +395,60 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
                  (char= (current-char lexer) #\Newline))
         (advance lexer)))
 
-    (let ((chars '()))
-      (loop
-        (when (at-end-p lexer)
-          (error 'types:toml-parse-error
-                 :message (if is-multiline
-                              "Unterminated multi-line literal string"
-                              "Unterminated literal string")
-                 :line line
-                 :column col))
+    (make-token :type :string
+                :value (with-output-to-string (stream)
+                         (loop
+                           (when (at-end-p lexer)
+                             (error 'types:toml-parse-error
+                                    :message (if is-multiline
+                                                 "Unterminated multi-line literal string"
+                                                 "Unterminated literal string")
+                                    :line line
+                                    :column col))
 
-        (let ((ch (current-char lexer)))
-          (cond
-            ;; Check for closing quotes
-            ((char= ch #\')
-             (if is-multiline
-                 ;; Use greedy quote counting for multiline strings
-                 (multiple-value-bind (status content-quotes)
-                     (handle-multiline-closing-quotes lexer #\')
-                   (if (eq status :closed)
-                       (progn
-                         ;; Add content quotes and close string
-                         (dotimes (i content-quotes)
-                           (push #\' chars))
-                         (return))
-                       ;; Less than 3 quotes - add them as content
-                       (dotimes (i content-quotes)
-                         (push (advance lexer) chars))))
-                 ;; Single-line string - done
-                 (progn
-                   (advance lexer)
-                   (return))))
+                           (let ((ch (current-char lexer)))
+                             (cond
+                               ;; Check for closing quotes
+                               ((char= ch #\')
+                                (if is-multiline
+                                    ;; Use greedy quote counting for multiline strings
+                                    (multiple-value-bind (status content-quotes)
+                                        (handle-multiline-closing-quotes lexer #\')
+                                      (if (eq status :closed)
+                                          (progn
+                                            ;; Add content quotes and close string
+                                            (dotimes (i content-quotes)
+                                              (write-char #\' stream))
+                                            (return))
+                                          ;; Less than 3 quotes - add them as content
+                                          (dotimes (i content-quotes)
+                                            (write-char (advance lexer) stream))))
+                                    ;; Single-line string - done
+                                    (progn
+                                      (advance lexer)
+                                      (return))))
 
-            ;; Newline in single-line literal string is error
-            ((and (not is-multiline) (char= ch #\Newline))
-             (error 'types:toml-parse-error
-                    :message "Newline not allowed in single-line literal string"
-                    :line line
-                    :column col))
+                               ;; Newline in single-line literal string is error
+                               ((and (not is-multiline) (char= ch #\Newline))
+                                (error 'types:toml-parse-error
+                                       :message "Newline not allowed in single-line literal string"
+                                       :line line
+                                       :column col))
 
-            ;; Control characters not allowed in literal strings (except tab and newlines in multiline strings)
-            ((and (is-control-char-p ch)
-                  (not (and is-multiline (char= ch #\Newline))))
-             (error 'types:toml-parse-error
-                    :message (format nil "Control character U+~4,'0X not allowed in literal string"
-                                     (char-code ch))
-                    :line (lexer-line lexer)
-                    :column (lexer-column lexer)))
+                               ;; Control characters not allowed in literal strings (except tab and newlines in multiline strings)
+                               ((and (is-control-char-p ch)
+                                     (not (and is-multiline (char= ch #\Newline))))
+                                (error 'types:toml-parse-error
+                                       :message (format nil "Control character U+~4,'0X not allowed in literal string"
+                                                        (char-code ch))
+                                       :line (lexer-line lexer)
+                                       :column (lexer-column lexer)))
 
-            ;; Regular character (no escapes in literal strings)
-            (t
-             (push (advance lexer) chars)))))
-
-      (make-token :type :string
-                  :value (coerce (nreverse chars) 'string)
-                  :line line
-                  :column col))))
+                               ;; Regular character (no escapes in literal strings)
+                               (t
+                                (write-char (advance lexer) stream))))))
+                :line line
+                :column col)))
 
 ;;; Bare key and keyword lexing
 
@@ -449,42 +458,40 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
 
 (defun lex-bare-key-or-keyword (lexer line col)
   "Lex a bare key or keyword (true, false, inf, nan)"
-  (let ((chars '()))
-    (loop while (and (not (at-end-p lexer))
-                     (or (alphanumericp (current-char lexer))
-                         (char= (current-char lexer) #\_)
-                         (char= (current-char lexer) #\-)))
-          do (push (advance lexer) chars))
-    (let ((text (coerce (nreverse chars) 'string)))
-      (cond
-        ((string= text "true")
-         (make-token :type :boolean :value t :line line :column col))
-        ((string= text "false")
-         (make-token :type :boolean :value nil :line line :column col))
-        ((or (string= text "inf") (string= text "+inf"))
-         (make-token :type :float :value float-utils:double-float-positive-infinity :line line :column col))
-        ((string= text "-inf")
-         (make-token :type :float :value float-utils:double-float-negative-infinity :line line :column col))
-        ((or (string= text "nan") (string= text "+nan") (string= text "-nan"))
-         (make-token :type :float :value float-utils:double-float-nan :line line :column col))
-        (t
-         (make-token :type :bare-key :value text :line line :column col))))))
+  (let ((text (with-output-to-string (stream)
+                (loop while (and (not (at-end-p lexer))
+                                 (or (alphanumericp (current-char lexer))
+                                     (char= (current-char lexer) #\_)
+                                     (char= (current-char lexer) #\-)))
+                      do (write-char (advance lexer) stream)))))
+    (cond
+      ((string= text "true")
+       (make-token :type :boolean :value t :line line :column col))
+      ((string= text "false")
+       (make-token :type :boolean :value nil :line line :column col))
+      ((or (string= text "inf") (string= text "+inf"))
+       (make-token :type :float :value float-utils:double-float-positive-infinity :line line :column col))
+      ((string= text "-inf")
+       (make-token :type :float :value float-utils:double-float-negative-infinity :line line :column col))
+      ((or (string= text "nan") (string= text "+nan") (string= text "-nan"))
+       (make-token :type :float :value float-utils:double-float-nan :line line :column col))
+      (t
+       (make-token :type :bare-key :value text :line line :column col)))))
 
 (defun lex-bare-key-conservative (lexer line col)
   "Lex a bare key without trying datetime/number parsing.
    Used in key context where '1.2' should be two keys '1' and '2', not a float.
    Collects alphanumeric characters, digits, hyphens, and underscores."
-  (let ((chars '()))
-    (loop while (and (not (at-end-p lexer))
-                     (let ((ch (current-char lexer)))
-                       (or (alphanumericp ch)
-                           (char= ch #\-)
-                           (char= ch #\_))))
-          do (push (advance lexer) chars))
-    (make-token :type :bare-key
-                :value (coerce (nreverse chars) 'string)
-                :line line
-                :column col)))
+  (make-token :type :bare-key
+              :value (with-output-to-string (stream)
+                       (loop while (and (not (at-end-p lexer))
+                                        (let ((ch (current-char lexer)))
+                                          (or (alphanumericp ch)
+                                              (char= ch #\-)
+                                              (char= ch #\_))))
+                             do (write-char (advance lexer) stream)))
+              :line line
+              :column col))
 
 ;;; Number and datetime lexing
 
@@ -493,11 +500,13 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
   (if (or (null frac-str) (string= frac-str ""))
       0
       ;; Remove leading dot if present, pad to 9 digits
-      (let* ((cleaned (if (char= (char frac-str 0) #\.)
-                          (subseq frac-str 1)
-                          frac-str))
-             (padded (format nil "~A~V@{~A~:*~}" cleaned (- 9 (length cleaned)) "0")))
-        (parse-integer (subseq padded 0 9)))))
+      (let* ((start (if (char= (char frac-str 0) #\.) 1 0))
+             (len (- (length frac-str) start))
+             (padded (with-output-to-string (stream)
+                       (write-string frac-str stream :start start)
+                       (dotimes (i (- 9 len))
+                         (write-char #\0 stream)))))
+        (parse-integer padded :start 0 :end (min 9 (length padded))))))
 
 (defun validate-datetime-ranges (year month day hour minute second offset-hour offset-minute)
   "Validate that datetime component values are in valid ranges"
@@ -579,11 +588,11 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
                               (* sign (+ (* oh 60) om))))))))
        ;; Validate datetime ranges
        (validate-datetime-ranges y mon d h min s
-                                (when off-min (floor (abs off-min) 60))
-                                (when off-min (mod (abs off-min) 60)))
+                                 (when off-min (floor (abs off-min) 60))
+                                 (when off-min (mod (abs off-min) 60)))
        (types:make-offset-datetime :year y :month mon :day d
-                                  :hour h :minute min :second s
-                                  :nanosecond ns :offset off-min)))
+                                   :hour h :minute min :second s
+                                   :nanosecond ns :offset off-min)))
 
    ;; Local datetime: YYYY-MM-DDTHH:MM:SS(.fraction)?
    (ppcre:register-groups-bind ((#'parse-integer y mon d h min s) frac)
@@ -591,8 +600,8 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
      (let ((ns (parse-fractional-seconds frac)))
        (validate-datetime-ranges y mon d h min s nil nil)
        (types:make-local-datetime :year y :month mon :day d
-                                 :hour h :minute min :second s
-                                 :nanosecond ns)))
+                                  :hour h :minute min :second s
+                                  :nanosecond ns)))
 
    ;; Local date: YYYY-MM-DD
    (ppcre:register-groups-bind ((#'parse-integer y mon d))
@@ -700,21 +709,19 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
 
 (defun lex-number-or-datetime (lexer line col)
   "Lex a number (integer/float) or datetime"
-  (let ((chars '()))
-    ;; Collect all characters that could be part of number or datetime
-    (loop while (and (not (at-end-p lexer))
-                     (or (digit-char-p (current-char lexer))
-                         (member (current-char lexer)
-                                '(#\+ #\- #\_ #\. #\e #\E #\x #\X #\o #\O #\b #\B #\: #\T #\t #\Z #\z
-                                  #\a #\A #\b #\B #\c #\C #\d #\D #\e #\E #\f #\F
-                                  #\i #\I #\n #\N)) ; for inf and nan
-                         ;; Include space if it might be a datetime separator (date followed by time)
-                         (and (char= (current-char lexer) #\Space)
-                              (let ((next-ch (peek-char-at lexer 1)))
-                                (and next-ch (digit-char-p next-ch))))))
-          do (push (advance lexer) chars))
-
-    (let ((text (coerce (nreverse chars) 'string)))
+  (let ((text (with-output-to-string (stream)
+                ;; Collect all characters that could be part of number or datetime
+                (loop while (and (not (at-end-p lexer))
+                                 (or (digit-char-p (current-char lexer))
+                                     (member (current-char lexer)
+                                            '(#\+ #\- #\_ #\. #\e #\E #\x #\X #\o #\O #\b #\B #\: #\T #\t #\Z #\z
+                                              #\a #\A #\b #\B #\c #\C #\d #\D #\e #\E #\f #\F
+                                              #\i #\I #\n #\N)) ; for inf and nan
+                                     ;; Include space if it might be a datetime separator (date followed by time)
+                                     (and (char= (current-char lexer) #\Space)
+                                          (let ((next-ch (peek-char-at lexer 1)))
+                                            (and next-ch (digit-char-p next-ch))))))
+                      do (write-char (advance lexer) stream)))))
       ;; Check for special float values first
       (cond
         ((or (string= text "inf") (string= text "+inf"))
@@ -749,12 +756,13 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
            (error (e)
              ;; If datetime parsing fails, it might be a bare key like "2000-datetime"
              ;; Continue collecting remaining bare key characters
-             (loop while (and (not (at-end-p lexer))
-                              (or (alphanumericp (current-char lexer))
-                                  (char= (current-char lexer) #\_)
-                                  (char= (current-char lexer) #\-)))
-                   do (push (advance lexer) chars))
-             (let ((full-text (coerce (nreverse chars) 'string)))
+             (let ((full-text (with-output-to-string (stream)
+                                (write-string text stream)
+                                (loop while (and (not (at-end-p lexer))
+                                                 (or (alphanumericp (current-char lexer))
+                                                     (char= (current-char lexer) #\_)
+                                                     (char= (current-char lexer) #\-)))
+                                      do (write-char (advance lexer) stream)))))
                ;; Check if the full text looks like a valid bare key
                (if (every (lambda (c) (or (alphanumericp c) (char= c #\-) (char= c #\_))) full-text)
                    (make-token :type :bare-key :value full-text :line line :column col)
@@ -771,14 +779,14 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
                   (or (alpha-char-p (current-char lexer))
                       (char= (current-char lexer) #\_)))
              ;; Continue collecting as bare key
-             (progn
-               (loop while (and (not (at-end-p lexer))
-                                (or (alphanumericp (current-char lexer))
-                                    (char= (current-char lexer) #\_)
-                                    (char= (current-char lexer) #\-)))
-                     do (push (advance lexer) chars))
-               (let ((full-text (coerce (nreverse chars) 'string)))
-                 (make-token :type :bare-key :value full-text :line line :column col)))
+             (let ((full-text (with-output-to-string (stream)
+                                (write-string text stream)
+                                (loop while (and (not (at-end-p lexer))
+                                                 (or (alphanumericp (current-char lexer))
+                                                     (char= (current-char lexer) #\_)
+                                                     (char= (current-char lexer) #\-)))
+                                      do (write-char (advance lexer) stream)))))
+               (make-token :type :bare-key :value full-text :line line :column col))
              ;; Try to parse as number
              (handler-case
                  (let ((value (parse-number-string text)))
@@ -802,4 +810,4 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
                     (error 'types:toml-parse-error
                            :message (format nil "Invalid number format: ~A (~A)" text e)
                            :line line
-                           :column col)))))))))))
+                           :column col))))))))))

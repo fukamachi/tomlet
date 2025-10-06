@@ -154,49 +154,48 @@
       (return-from parse-array (make-array 0)))
 
     ;; Parse elements
-    (loop
-      (push (parse-value state) elements)
+    (coerce
+      (loop
+        collect (parse-value state)
 
-      ;; Skip whitespace/newlines after value
-      (loop while (and (current-token state)
-                       (member (lexer:token-type (current-token state))
-                               '(:newline)))
-            do (advance-token state))
-
-      (let ((token (current-token state)))
-        (unless token
-          (error 'types:toml-parse-error
-                 :message "Unterminated array"))
-
-        (cond
-          ;; End of array
-          ((eq (lexer:token-type token) :right-bracket)
-           (advance-token state)
-           (return))
-
-          ;; Comma - continue to next element
-          ((eq (lexer:token-type token) :comma)
-           (advance-token state)
-           ;; Skip whitespace/newlines after comma
-           (loop while (and (current-token state)
+        ;; Skip whitespace/newlines after value
+        do (loop while (and (current-token state)
                             (member (lexer:token-type (current-token state))
                                     '(:newline)))
                  do (advance-token state))
-           ;; Allow trailing comma
-           (when (and (current-token state)
-                      (eq (lexer:token-type (current-token state)) :right-bracket))
-             (advance-token state)
-             (return)))
 
-          (t
-           (error 'types:toml-parse-error
-                  :message (format nil "Expected comma or ] in array but got ~A"
-                                   (lexer:token-type token))
-                  :line (lexer:token-line token)
-                  :column (lexer:token-column token))))))
+           (let ((token (current-token state)))
+             (unless token
+               (error 'types:toml-parse-error
+                      :message "Unterminated array"))
 
-    ;; Return as vector (reversed since we pushed)
-    (coerce (nreverse elements) 'vector)))
+             (cond
+               ;; End of array
+               ((eq (lexer:token-type token) :right-bracket)
+                (advance-token state)
+                (return))
+
+               ;; Comma - continue to next element
+               ((eq (lexer:token-type token) :comma)
+                (advance-token state)
+                ;; Skip whitespace/newlines after comma
+                (loop while (and (current-token state)
+                                 (member (lexer:token-type (current-token state))
+                                         '(:newline)))
+                      do (advance-token state))
+                ;; Allow trailing comma
+                (when (and (current-token state)
+                           (eq (lexer:token-type (current-token state)) :right-bracket))
+                  (advance-token state)
+                  (return)))
+
+               (t
+                (error 'types:toml-parse-error
+                       :message (format nil "Expected comma or ] in array but got ~A"
+                                        (lexer:token-type token))
+                       :line (lexer:token-line token)
+                       :column (lexer:token-column token))))))
+      'vector)))
 
 (defun parse-inline-table (state)
   "Parse an inline table {key = value, ...}"
@@ -336,12 +335,11 @@
 
 (defun parse-dotted-key (state)
   "Parse a dotted key (a.b.c) and return a list of key parts"
-  (let ((keys (list (parse-key state))))
-    (loop while (and (current-token state)
-                     (eq (lexer:token-type (current-token state)) :dot))
-          do (advance-token state :context :key)  ; skip dot, next will be key
-             (push (parse-key state) keys))
-    (nreverse keys)))
+  (cons (parse-key state)
+        (loop while (and (current-token state)
+                         (eq (lexer:token-type (current-token state)) :dot))
+              do (advance-token state :context :key)  ; skip dot, next will be key
+              collect (parse-key state))))
 
 (defun get-or-create-table (table key-path)
   "Navigate/create nested tables for a dotted key path"
@@ -407,9 +405,9 @@
    Handles array-of-tables in the path by navigating to last elements.
    This is used for [table.header] sections, NOT for key-value pairs."
   (loop with table = (parser-state-result state)
-        for key in key-path
-        for i from 1
-        for path-so-far = (subseq key-path 0 i)
+        for keys-tail on key-path
+        for key = (first keys-tail)
+        for path-so-far = (ldiff key-path (rest keys-tail))
         for path-str = (format nil "~{~A~^.~}" path-so-far)
         for is-array-table = (gethash path-str (parser-state-array-table-paths state))
         for existing = (gethash key table)
@@ -497,8 +495,8 @@
 
 (defun path-has-array-table-prefix (path array-table-paths)
   "Check if any prefix of path is an array-table"
-  (loop for i from 1 to (length path)
-        for prefix = (subseq path 0 i)
+  (loop for path-tail on path
+        for prefix = (ldiff path (rest path-tail))
         for prefix-str = (format nil "~{~A~^.~}" prefix)
         when (gethash prefix-str array-table-paths)
         return t))
@@ -513,9 +511,9 @@
             ;; Navigate through the path, handling array tables
             ;; For nested arrays like [[fruit.variety]], we need to navigate through parent arrays
             (loop with table = (parser-state-result state)
-                  for key in path
-                  for i from 1
-                  for path-so-far = (subseq path 0 i)
+                  for path-tail on path
+                  for key = (first path-tail)
+                  for path-so-far = (ldiff path (rest path-tail))
                   do (if (gethash (format nil "~{~A~^.~}" path-so-far)
                                   (parser-state-array-table-paths state))
                          ;; This level is an array table - get last element
