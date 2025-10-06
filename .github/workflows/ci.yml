@@ -7,8 +7,9 @@ jobs:
     name: Test on ${{ matrix.lisp }}
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        lisp: [sbcl-bin]
+        lisp: [sbcl-bin, abcl-bin, ccl-bin, ecl]
 
     steps:
       - name: Checkout code
