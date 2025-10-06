@@ -2,8 +2,8 @@
 
 Comparison of TOML parser libraries for Common Lisp against the official TOML v1.0.0 test suite.
 
-**Test Date**: 2025-10-06
-**Test Suite**: [toml-lang/toml-test](https://github.com/toml-lang/toml-test) v1.6.0 (TOML v1.0.0)
+**Test Date**: 2025-10-06  
+**Test Suite**: [toml-lang/toml-test](https://github.com/toml-lang/toml-test) v1.6.0 (TOML v1.0.0)  
 **Lisp Implementation**: SBCL 2.4.9
 
 ## Test Results
@@ -18,23 +18,24 @@ Comparison of TOML parser libraries for Common Lisp against the official TOML v1
 **Note**:
 - tomlet, clop, and parcom/toml all tested against the same test suite (commit 1d35870, 734 tests total)
 - cl-toml supports TOML v0.4.0 (older specification, not compatible with v1.0.0 test suite)
-- tomlet: 734 tests (205 valid + 529 invalid)
-- clop: 734 tests (205 valid + 529 invalid), 4 failures on high Unicode codepoints >U+FFFF
-- parcom: 733 tests (204 valid + 529 invalid), 1 test skipped (valid/float/inf-and-nan.toml)
 
 ## Platform Support
 
 ### tomlet
 - SBCL: All 734 tests pass
 - CCL: All 734 tests pass
-- ABCL: 723/734 pass (11 skipped due to platform limitation with Unicode codepoints >U+FFFF)
-- ECL: 733/734 pass (1 skipped due to platform limitation with Unicode codepoints >U+FFFF)
+- ABCL: 723/734 pass
+  - 11 skipped due to platform limitation with Unicode codepoints >U+FFFF
+- ECL: 733/734 pass
+  - 1 skipped due to platform limitation with Unicode codepoints >U+FFFF
 
 ### clop
-- SBCL: 730/734 pass (4 failures on high Unicode codepoints >U+FFFF)
+- SBCL: 730/734 pass
+  - 4 failures on high Unicode codepoints >U+FFFF
 
 ### parcom/toml
-- SBCL: 594/733 pass (139 failures, 1 test skipped)
+- SBCL: 594/733 pass
+  - 139 failures, 1 test skipped
 
 ### cl-toml
 - Not tested in this comparison
@@ -81,7 +82,8 @@ Comparison of TOML parser libraries for Common Lisp against the official TOML v1
 - **Repository**: https://github.com/fukamachi/tomlet
 - **License**: MIT
 - **Dependencies**: cl-ppcre
-- **Portability**: Implementation-specific code only in float-utils.lisp for special float values (inf, nan) with reader conditionals for SBCL, CCL, ECL, ABCL, Allegro, LispWorks, and Clasp
+- **Portability**: Implementation-specific code only for special float values (inf, nan)
+  - Supports SBCL, CCL, ECL, ABCL, Allegro, LispWorks, and Clasp
 
 ### clop
 - **Repository**: https://github.com/sheepduke/clop
