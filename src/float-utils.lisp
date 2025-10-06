@@ -47,7 +47,7 @@
   #+clasp
   ext:double-float-nan
   #+abcl
-  ext:double-float-nan
+  (/ 0.0d0 0.0d0)
   #+allegro
   excl::*nan-double*
   #+lispworks
