@@ -1,7 +1,8 @@
 (defpackage #:tomlet/lexer
   (:use #:cl)
   (:local-nicknames
-   (#:types #:tomlet/types))
+   (#:types #:tomlet/types)
+   (#:float-utils #:tomlet/float-utils))
   (:export #:token
            #:make-token
            #:token-type
@@ -410,8 +411,7 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
 
 (defun make-nan ()
   "Create a NaN value at runtime"
-  ;; Read the NaN literal representation
-  (read-from-string "#.(sb-int:with-float-traps-masked (:invalid) (/ 0.0d0 0.0d0))"))
+  float-utils:double-float-nan)
 
 (defun lex-bare-key-or-keyword (lexer line col)
   "Lex a bare key or keyword (true, false, inf, nan)"
@@ -428,11 +428,11 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
         ((string= text "false")
          (make-token :type :boolean :value nil :line line :column col))
         ((or (string= text "inf") (string= text "+inf"))
-         (make-token :type :float :value sb-ext:double-float-positive-infinity :line line :column col))
+         (make-token :type :float :value float-utils:double-float-positive-infinity :line line :column col))
         ((string= text "-inf")
-         (make-token :type :float :value sb-ext:double-float-negative-infinity :line line :column col))
+         (make-token :type :float :value float-utils:double-float-negative-infinity :line line :column col))
         ((or (string= text "nan") (string= text "+nan") (string= text "-nan"))
-         (make-token :type :float :value (make-nan) :line line :column col))
+         (make-token :type :float :value float-utils:double-float-nan :line line :column col))
         (t
          (make-token :type :bare-key :value text :line line :column col))))))
 
@@ -632,11 +632,11 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
       ;; Check for special float values first
       (cond
         ((or (string= text "inf") (string= text "+inf"))
-         (make-token :type :float :value sb-ext:double-float-positive-infinity :line line :column col))
+         (make-token :type :float :value float-utils:double-float-positive-infinity :line line :column col))
         ((string= text "-inf")
-         (make-token :type :float :value sb-ext:double-float-negative-infinity :line line :column col))
+         (make-token :type :float :value float-utils:double-float-negative-infinity :line line :column col))
         ((or (string= text "nan") (string= text "+nan") (string= text "-nan"))
-         (make-token :type :float :value (make-nan) :line line :column col))
+         (make-token :type :float :value float-utils:double-float-nan :line line :column col))
 
         ;; Try to discriminate between datetime and number
         ;; Datetime has format: YYYY-MM-DD, YYYY-MM-DDTHH:MM:SS, or HH:MM:SS
@@ -704,11 +704,11 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
                  ;; Check for signed inf/nan
                  (cond
                    ((or (string= text "+inf") (string= text "inf"))
-                    (make-token :type :float :value sb-ext:double-float-positive-infinity :line line :column col))
+                    (make-token :type :float :value float-utils:double-float-positive-infinity :line line :column col))
                    ((string= text "-inf")
-                    (make-token :type :float :value sb-ext:double-float-negative-infinity :line line :column col))
+                    (make-token :type :float :value float-utils:double-float-negative-infinity :line line :column col))
                    ((or (string= text "nan") (string= text "+nan") (string= text "-nan"))
-                    (make-token :type :float :value (make-nan) :line line :column col))
+                    (make-token :type :float :value float-utils:double-float-nan :line line :column col))
                    ;; If number parsing fails and text looks like a bare key, return as bare key
                    ((every (lambda (c) (or (alphanumericp c) (char= c #\-) (char= c #\_) (char= c #\+))) text)
                     (make-token :type :bare-key :value text :line line :column col))

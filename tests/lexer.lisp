@@ -2,7 +2,8 @@
   (:use #:cl
         #:rove)
   (:local-nicknames
-   (#:lexer #:tomlet/lexer)))
+   (#:lexer #:tomlet/lexer)
+   (#:float-utils #:tomlet/float-utils)))
 (in-package #:tomlet/tests/lexer)
 
 ;;; ===========================================================================
@@ -108,7 +109,7 @@
   (testing "inf keyword"
     (let ((tokens (lexer:lex "inf")))
       (ok (eq (lexer:token-type (first tokens)) :float))
-      (ok (sb-ext:float-infinity-p (lexer:token-value (first tokens))))))
+      (ok (float-utils:float-infinity-p (lexer:token-value (first tokens))))))
 
   (testing "nan keyword"
     (let ((tokens (lexer:lex "nan")))

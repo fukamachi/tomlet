@@ -2,7 +2,8 @@
   (:use #:cl)
   (:local-nicknames
    (#:types #:tomlet/types)
-   (#:lexer #:tomlet/lexer))
+   (#:lexer #:tomlet/lexer)
+   (#:float-utils #:tomlet/float-utils))
   (:import-from #:tomlet/types
                 #:toml-error
                 #:toml-error-message
@@ -39,9 +40,15 @@
                 #:offset-datetime-second
                 #:offset-datetime-nanosecond
                 #:offset-datetime-offset)
+  (:import-from #:tomlet/float-utils
+                #:double-float-positive-infinity
+                #:double-float-negative-infinity
+                #:double-float-nan
+                #:float-infinity-p
+                #:float-nan-p)
   (:export #:parse
            #:parse-file
-           ;; Re-export from tomlex/types
+           ;; Re-export from tomlet/types
            #:toml-error
            #:toml-error-message
            #:toml-parse-error
@@ -76,7 +83,13 @@
            #:offset-datetime-minute
            #:offset-datetime-second
            #:offset-datetime-nanosecond
-           #:offset-datetime-offset))
+           #:offset-datetime-offset
+           ;; Re-export from tomlet/float-utils
+           #:double-float-positive-infinity
+           #:double-float-negative-infinity
+           #:double-float-nan
+           #:float-infinity-p
+           #:float-nan-p))
 (in-package #:tomlet)
 
 ;;; Parser State
@@ -295,16 +308,16 @@
       ;; Float keywords (inf/nan) can be keys
       ((and (eq (lexer:token-type token) :float)
             (let ((val (lexer:token-value token)))
-              (or (sb-ext:float-infinity-p val)
-                  (sb-ext:float-nan-p val))))
+              (or (float-utils:float-infinity-p val)
+                  (float-utils:float-nan-p val))))
        (prog1 (cond
-                ((and (sb-ext:float-infinity-p (lexer:token-value token))
+                ((and (float-utils:float-infinity-p (lexer:token-value token))
                       (plusp (lexer:token-value token)))
                  "inf")
-                ((and (sb-ext:float-infinity-p (lexer:token-value token))
+                ((and (float-utils:float-infinity-p (lexer:token-value token))
                       (minusp (lexer:token-value token)))
                  "-inf")
-                ((sb-ext:float-nan-p (lexer:token-value token))
+                ((float-utils:float-nan-p (lexer:token-value token))
                  "nan")
                 (t (error 'types:toml-parse-error
                          :message "Unexpected float value as key")))

@@ -6,7 +6,8 @@
   :pathname "src"
   :serial t
   :components
-  ((:file "types")
+  ((:file "float-utils")
+   (:file "types")
    (:file "lexer")
    (:file "parser"))
   :in-order-to ((test-op (test-op "tomlet/tests"))))

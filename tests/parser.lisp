@@ -1,6 +1,8 @@
 (defpackage #:tomlet/tests/parser
   (:use #:cl
-        #:rove))
+        #:rove)
+  (:local-nicknames
+   (#:float-utils #:tomlet/float-utils)))
 (in-package #:tomlet/tests/parser)
 
 ;;; ===========================================================================
@@ -146,7 +148,7 @@
   (testing "Positive infinity"
     (let ((result (tomlet:parse "infinity = inf")))
       (ok (floatp (gethash "infinity" result)))
-      (ok (sb-ext:float-infinity-p (gethash "infinity" result)))))
+      (ok (float-utils:float-infinity-p (gethash "infinity" result)))))
 
   (testing "Not a number"
     (let ((result (tomlet:parse "not_a_number = nan")))

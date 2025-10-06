@@ -1,6 +1,8 @@
 (defpackage #:tomlet/tests
   (:use #:cl
-        #:rove))
+        #:rove)
+  (:local-nicknames
+   (#:float-utils #:tomlet/float-utils)))
 (in-package #:tomlet/tests)
 
 ;;; ===========================================================================
@@ -45,12 +47,12 @@
      (let ((expected-float (let ((*read-default-float-format* 'double-float))
                               (read-from-string expected))))
        (cond
-         ((string= expected "inf") (and (floatp actual) (sb-ext:float-infinity-p actual) (plusp actual)))
-         ((string= expected "-inf") (and (floatp actual) (sb-ext:float-infinity-p actual) (minusp actual)))
-         ((string= expected "nan") (and (floatp actual) (sb-ext:float-nan-p actual)))
-         ((string= expected "+inf") (and (floatp actual) (sb-ext:float-infinity-p actual) (plusp actual)))
-         ((string= expected "-nan") (and (floatp actual) (sb-ext:float-nan-p actual)))
-         ((string= expected "+nan") (and (floatp actual) (sb-ext:float-nan-p actual)))
+         ((string= expected "inf") (and (floatp actual) (float-utils:float-infinity-p actual) (plusp actual)))
+         ((string= expected "-inf") (and (floatp actual) (float-utils:float-infinity-p actual) (minusp actual)))
+         ((string= expected "nan") (and (floatp actual) (float-utils:float-nan-p actual)))
+         ((string= expected "+inf") (and (floatp actual) (float-utils:float-infinity-p actual) (plusp actual)))
+         ((string= expected "-nan") (and (floatp actual) (float-utils:float-nan-p actual)))
+         ((string= expected "+nan") (and (floatp actual) (float-utils:float-nan-p actual)))
          (t (< (abs (- expected-float actual)) 0.00001)))))
     (:bool
      (eq (string= expected "true") actual))

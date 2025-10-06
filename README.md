@@ -2,6 +2,12 @@
 
 A TOML v1.0.0 compliant parser for Common Lisp.
 
+**Features:**
+- **100% TOML v1.0.0 spec compliance** - Passes all 734 official tests
+- **Zero dependencies** - No external libraries required
+- **Portable** - Works across major Common Lisp implementations
+- **JSON-compatible output** - Parses TOML into hash-tables and vectors, making it easy to convert to JSON or work with existing JSON tools
+
 ## Quick Start
 
 ```lisp
@@ -105,6 +111,21 @@ Each type has corresponding constructor, predicate, and accessor functions:
 - `make-local-time`, `local-time-p`, `local-time-hour`, etc.
 - `make-local-datetime`, `local-datetime-p`, `local-datetime-year`, etc.
 - `make-offset-datetime`, `offset-datetime-p`, `offset-datetime-year`, `offset-datetime-offset`, etc.
+
+#### Special Float Values
+
+tomlet provides portable special float values and predicates:
+
+**Constants:**
+- `double-float-positive-infinity` - Positive infinity
+- `double-float-negative-infinity` - Negative infinity
+- `double-float-nan` - Not-a-Number (NaN)
+
+**Predicates:**
+- `float-infinity-p` - Test if a float is infinity (positive or negative)
+- `float-nan-p` - Test if a float is NaN
+
+These are useful when working with TOML files containing special float values like `inf`, `-inf`, or `nan`.
 
 ### Error Conditions
 
@@ -285,12 +306,77 @@ time = 07:32:00
 ; => (:OFFSET-YEAR 1979 :LOCAL-YEAR 1979 :DATE-DAY 27 :TIME-HOUR 7)
 ```
 
+### Special Float Values
+
+```lisp
+(let* ((data (tomlet:parse "
+pos_inf = inf
+neg_inf = -inf
+not_a_num = nan
+"))
+       (pos-inf (gethash "pos_inf" data))
+       (neg-inf (gethash "neg_inf" data))
+       (nan (gethash "not_a_num" data)))
+
+  (list :pos-inf-p (tomlet:float-infinity-p pos-inf)
+        :neg-inf-p (tomlet:float-infinity-p neg-inf)
+        :nan-p (tomlet:float-nan-p nan)))
+; => (:POS-INF-P T :NEG-INF-P T :NAN-P T)
+
+;; Compare with constants
+(eq pos-inf tomlet:double-float-positive-infinity)  ; => T
+(eq neg-inf tomlet:double-float-negative-infinity)  ; => T
+```
+
 ## Compliance & Test Coverage
 
 - **Official TOML v1.0.0 test suite:** **100% passing (734/734 tests)**
   - 205 valid tests: 205 passing ✓
   - 529 invalid tests: 529 passing ✓
   - Full compliance with TOML v1.0.0 specification
+
+## JSON Compatibility
+
+tomlet parses TOML into native Common Lisp data structures (hash-tables and vectors), making it trivially easy to convert to JSON or integrate with JSON workflows:
+
+```lisp
+;; Parse TOML
+(defparameter *config*
+  (tomlet:parse "
+[server]
+host = \"localhost\"
+port = 8080
+features = [\"auth\", \"logging\"]
+"))
+
+;; Convert to JSON using your favorite JSON library
+;; Example with jzon:
+(jzon:stringify *config*)
+; => "{\"server\":{\"host\":\"localhost\",\"port\":8080,\"features\":[\"auth\",\"logging\"]}}"
+
+;; Example with yason:
+(yason:encode *config*)
+; => Same JSON output
+
+;; Or work with the data structures directly
+(gethash "server" *config*)  ; => hash-table
+```
+
+This design makes tomlet ideal for:
+- Configuration files that need both TOML and JSON support
+- APIs that accept configuration in multiple formats
+- Migration from TOML to JSON (or vice versa)
+- Integration with existing JSON-based tools and libraries
+
+## Supported Implementations
+
+- **SBCL** - Tested and fully supported
+- **Clozure CL** - Supported
+- **ECL** - Supported
+- **Clasp** - Supported
+- **ABCL** - Supported
+- **Allegro CL** - Supported
+- **LispWorks** - Supported
 
 ## License
 
