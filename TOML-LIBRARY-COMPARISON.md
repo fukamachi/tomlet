@@ -10,16 +10,16 @@ Comparison of TOML parser libraries for Common Lisp against the official TOML v1
 
 | Library | TOML Version | Commit | Tests Passed | Tests Failed | Pass Rate |
 |---------|:------------:|:------:|:------------:|--------------:|----------:|
-| tomlet | v1.0.0 | 7886cf6 | 734/734 | 0 | 100% |
-| clop | v1.0.0 | c0c3fe7 | 730/734 | 4 | 99.5% |
-| parcom/toml | v1.0.0 | e29a293 | 594/733 | 139 | 81.0% |
-| cl-toml | v0.4.0 | - | - | - | Not tested |
+| [tomlet](https://github.com/fukamachi/tomlet) | v1.0.0 | 7886cf6 | 734/734 | 0 | 100% |
+| [clop](https://github.com/sheepduke/clop) | v1.0.0 | c0c3fe7 | 730/734 | 4 | 99.5% |
+| [parcom/toml](https://github.com/fosskers/parcom) | v1.0.0 | e29a293 | 594/734 | 140 | 80.9% |
+| [cl-toml](https://github.com/cxxxr/cl-toml) | v0.4.0 | - | - | - | Not tested |
 
 **Note**:
 - tomlet, clop, and parcom/toml all tested against the same test suite (commit 1d35870, 734 tests total)
-- cl-toml supports TOML v0.4.0 (older specification, not compatible with v1.0.0 test suite)
+- cl-toml supports only old specification (TOML v0.4.0)
 
-## Platform Support
+## Test Results by Platform
 
 ### tomlet
 - SBCL: All 734 tests pass
@@ -34,8 +34,9 @@ Comparison of TOML parser libraries for Common Lisp against the official TOML v1
   - 4 failures on high Unicode codepoints >U+FFFF
 
 ### parcom/toml
-- SBCL: 594/733 pass
-  - 139 failures, 1 test skipped
+- SBCL: 594/734 pass
+  - Valid tests: 162/205 pass
+  - Invalid tests: 432/529 pass
 
 ### cl-toml
 - Not tested in this comparison
@@ -53,21 +54,21 @@ Comparison of TOML parser libraries for Common Lisp against the official TOML v1
   - valid/string/quoted-unicode.toml
 
 ### parcom/toml
-139 test failures (97 invalid tests accepted + 42 valid tests failed):
+140 test failures (97 invalid tests incorrectly accepted + 43 valid tests failed):
 
 **Invalid tests incorrectly accepted (97 tests):**
 - Control characters under invalid/control/ (21 tests)
 - String escapes under invalid/string/ (52 tests)
 - Table/key errors under invalid/key/, invalid/table/, invalid/inline-table/ (24 tests)
 
-**Valid tests failed (42 tests):**
+**Valid tests failed (43 tests):**
 - Multiline strings under valid/string/, valid/spec-1.0.0/ (13 tests)
 - Table semantics under valid/table/, valid/spec-1.0.0/ (11 tests)
 - Integer literals under valid/integer/ (2 tests)
-- Special floats: valid/spec-1.0.0/float-2.toml (1 test)
 - Comments under valid/comment/ (3 tests)
 - Arrays under valid/array/ (3 tests)
-- Others under valid/datetime/, valid/float/, valid/inline-table/, valid/key/ (9 tests)
+- Special floats: valid/float/inf-and-nan.toml, valid/spec-1.0.0/float-2.toml (2 tests)
+- Others under valid/datetime/, valid/inline-table/, valid/key/ (9 tests)
 
 ### cl-toml
 - TOML v1.0.0 features (supports v0.4.0 only)
