@@ -173,11 +173,26 @@
                    (member (current-char lexer) '(#\Space #\Tab #\Return)))
         do (advance lexer)))
 
+(defun is-control-char-p (ch)
+  "Check if character is a control character (U+0000 to U+001F, U+007F) except tab"
+  (and (characterp ch)
+       (let ((code (char-code ch)))
+         (or (and (>= code 0) (<= code 31) (not (= code 9)))  ; U+0000-U+001F except tab
+             (= code 127)))))  ; DEL (U+007F)
+
 (defun skip-comment (lexer)
-  "Skip from # to end of line"
+  "Skip from # to end of line, validating no control characters"
   (loop while (and (not (at-end-p lexer))
                    (not (char= (current-char lexer) #\Newline)))
-        do (advance lexer)))
+        do (let ((ch (current-char lexer)))
+             ;; Control characters not allowed in comments (except tab)
+             (when (is-control-char-p ch)
+               (error 'types:toml-parse-error
+                      :message (format nil "Control character U+~4,'0X not allowed in comment"
+                                       (char-code ch))
+                      :line (lexer-line lexer)
+                      :column (lexer-column lexer)))
+             (advance lexer))))
 
 ;;; String lexing with escape sequences
 
@@ -333,6 +348,14 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
                     :line line
                     :column col))
 
+            ;; Control characters not allowed in strings (except tab, which is checked above)
+            ((is-control-char-p ch)
+             (error 'types:toml-parse-error
+                    :message (format nil "Control character U+~4,'0X not allowed in string"
+                                     (char-code ch))
+                    :line (lexer-line lexer)
+                    :column (lexer-column lexer)))
+
             ;; Regular character
             (t
              (push (advance lexer) chars)))))
@@ -398,6 +421,14 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
                     :message "Newline not allowed in single-line literal string"
                     :line line
                     :column col))
+
+            ;; Control characters not allowed in literal strings (except tab)
+            ((is-control-char-p ch)
+             (error 'types:toml-parse-error
+                    :message (format nil "Control character U+~4,'0X not allowed in literal string"
+                                     (char-code ch))
+                    :line (lexer-line lexer)
+                    :column (lexer-column lexer)))
 
             ;; Regular character (no escapes in literal strings)
             (t
