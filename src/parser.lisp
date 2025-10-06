@@ -154,48 +154,49 @@
       (return-from parse-array (make-array 0)))
 
     ;; Parse elements
-    (coerce
-      (loop
-        collect (parse-value state)
+    (loop
+      (push (parse-value state) elements)
 
-        ;; Skip whitespace/newlines after value
-        do (loop while (and (current-token state)
+      ;; Skip whitespace/newlines after value
+      (loop while (and (current-token state)
+                       (member (lexer:token-type (current-token state))
+                               '(:newline)))
+            do (advance-token state))
+
+      (let ((token (current-token state)))
+        (unless token
+          (error 'types:toml-parse-error
+                 :message "Unterminated array"))
+
+        (cond
+          ;; End of array
+          ((eq (lexer:token-type token) :right-bracket)
+           (advance-token state)
+           (return))
+
+          ;; Comma - continue to next element
+          ((eq (lexer:token-type token) :comma)
+           (advance-token state)
+           ;; Skip whitespace/newlines after comma
+           (loop while (and (current-token state)
                             (member (lexer:token-type (current-token state))
                                     '(:newline)))
                  do (advance-token state))
+           ;; Allow trailing comma
+           (when (and (current-token state)
+                      (eq (lexer:token-type (current-token state)) :right-bracket))
+             (advance-token state)
+             (return)))
 
-           (let ((token (current-token state)))
-             (unless token
-               (error 'types:toml-parse-error
-                      :message "Unterminated array"))
+          (t
+           (error 'types:toml-parse-error
+                  :message (format nil "Expected comma or ] in array but got ~A"
+                                   (lexer:token-type token))
+                  :line (lexer:token-line token)
+                  :column (lexer:token-column token))))))
 
-             (cond
-               ;; End of array
-               ((eq (lexer:token-type token) :right-bracket)
-                (advance-token state)
-                (return))
-
-               ;; Comma - continue to next element
-               ((eq (lexer:token-type token) :comma)
-                (advance-token state)
-                ;; Skip whitespace/newlines after comma
-                (loop while (and (current-token state)
-                                 (member (lexer:token-type (current-token state))
-                                         '(:newline)))
-                      do (advance-token state))
-                ;; Allow trailing comma
-                (when (and (current-token state)
-                           (eq (lexer:token-type (current-token state)) :right-bracket))
-                  (advance-token state)
-                  (return)))
-
-               (t
-                (error 'types:toml-parse-error
-                       :message (format nil "Expected comma or ] in array but got ~A"
-                                        (lexer:token-type token))
-                       :line (lexer:token-line token)
-                       :column (lexer:token-column token))))))
-      'vector)))
+    ;; Return as vector (reversed since we pushed)
+    (coerce (nreverse elements) 'vector)))
 
 (defun parse-inline-table (state)
   "Parse an inline table {key = value, ...}"

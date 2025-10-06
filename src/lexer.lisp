@@ -452,10 +452,6 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
 
 ;;; Bare key and keyword lexing
 
-(defun make-nan ()
-  "Create a NaN value at runtime"
-  float-utils:double-float-nan)
-
 (defun lex-bare-key-or-keyword (lexer line col)
   "Lex a bare key or keyword (true, false, inf, nan)"
   (let ((text (with-output-to-string (stream)
