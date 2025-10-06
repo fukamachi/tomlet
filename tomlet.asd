@@ -3,6 +3,7 @@
   :version "0.1.0"
   :author "Eitaro Fukamachi"
   :license "MIT"
+  :depends-on ("cl-ppcre")
   :pathname "src"
   :serial t
   :components

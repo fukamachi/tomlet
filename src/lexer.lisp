@@ -2,7 +2,8 @@
   (:use #:cl)
   (:local-nicknames
    (#:types #:tomlet/types)
-   (#:float-utils #:tomlet/float-utils))
+   (#:float-utils #:tomlet/float-utils)
+   (#:ppcre #:cl-ppcre))
   (:export #:token
            #:make-token
            #:token-type
@@ -581,30 +582,85 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
          (minutes (if (second parts) (parse-integer (second parts)) 0)))
     (* sign (+ (* hours 60) minutes))))
 
+(defun validate-and-clean-number (text)
+  "Validate number format and return cleaned text (underscores removed).
+   Returns (values cleaned-text is-float-p).
+   Signals toml-parse-error if format is invalid."
+
+  (let ((is-float (or (find #\. text) (find #\e text) (find #\E text))))
+
+    (cond
+      ;; Float validation
+      (is-float
+       ;; Valid float regex: [+-]?(0|[1-9](_?[0-9])*)(\.[0-9](_?[0-9])*)?([eE][+-]?[0-9](_?[0-9])*)?
+       (unless (ppcre:scan "^[+-]?(0|[1-9](_?[0-9])*)(\\.[0-9](_?[0-9])*)?([eE][+-]?[0-9](_?[0-9])*)?$" text)
+         (error 'types:toml-parse-error
+                :message (format nil "Invalid float format: ~A" text)))
+       (values (ppcre:regex-replace-all "_" text "") t))
+
+      ;; Integer validation
+      (t
+       (cond
+         ;; Hex: 0x[0-9a-fA-F](_?[0-9a-fA-F])*
+         ((ppcre:scan "^0[xX]" text)
+          (when (ppcre:scan "[XOB]" text)  ; Capital prefix check
+            (error 'types:toml-parse-error
+                   :message (format nil "Invalid integer: capital prefix in ~A" text)))
+          (unless (ppcre:scan "^0x[0-9a-fA-F](_?[0-9a-fA-F])*$" text)
+            (error 'types:toml-parse-error
+                   :message (format nil "Invalid hex integer format: ~A" text))))
+
+         ;; Octal: 0o[0-7](_?[0-7])*
+         ((ppcre:scan "^0[oO]" text)
+          (when (ppcre:scan "[XOB]" text)
+            (error 'types:toml-parse-error
+                   :message (format nil "Invalid integer: capital prefix in ~A" text)))
+          (unless (ppcre:scan "^0o[0-7](_?[0-7])*$" text)
+            (error 'types:toml-parse-error
+                   :message (format nil "Invalid octal integer format: ~A" text))))
+
+         ;; Binary: 0b[01](_?[01])*
+         ((ppcre:scan "^0[bB]" text)
+          (when (ppcre:scan "[XOB]" text)
+            (error 'types:toml-parse-error
+                   :message (format nil "Invalid integer: capital prefix in ~A" text)))
+          (unless (ppcre:scan "^0b[01](_?[01])*$" text)
+            (error 'types:toml-parse-error
+                   :message (format nil "Invalid binary integer format: ~A" text))))
+
+         ;; Decimal: [+-]?(0|[1-9](_?[0-9])*)
+         (t
+          (unless (ppcre:scan "^[+-]?(0|[1-9](_?[0-9])*)$" text)
+            (error 'types:toml-parse-error
+                   :message (format nil "Invalid decimal integer format: ~A" text)))))
+
+       (values (ppcre:regex-replace-all "_" text "") nil)))))
+
 (defun parse-number-string (text)
-  "Parse a number string (with underscores removed) to integer or float"
-  (let ((clean (remove #\_ text)))
+  "Parse a number string to integer or float"
+  (multiple-value-bind (clean is-float)
+      (validate-and-clean-number text)
     (cond
       ;; Hex integer
       ((and (>= (length clean) 3)
             (char= (char clean 0) #\0)
-            (or (char= (char clean 1) #\x) (char= (char clean 1) #\X)))
+            (char= (char clean 1) #\x))
        (parse-integer clean :start 2 :radix 16))
 
       ;; Octal integer
       ((and (>= (length clean) 3)
             (char= (char clean 0) #\0)
-            (or (char= (char clean 1) #\o) (char= (char clean 1) #\O)))
+            (char= (char clean 1) #\o))
        (parse-integer clean :start 2 :radix 8))
 
       ;; Binary integer
       ((and (>= (length clean) 3)
             (char= (char clean 0) #\0)
-            (or (char= (char clean 1) #\b) (char= (char clean 1) #\B)))
+            (char= (char clean 1) #\b))
        (parse-integer clean :start 2 :radix 2))
 
-      ;; Float (contains . or e/E)
-      ((or (find #\. clean) (find #\e clean) (find #\E clean))
+      ;; Float
+      (is-float
        (let ((*read-default-float-format* 'double-float))
          (read-from-string clean)))
 
