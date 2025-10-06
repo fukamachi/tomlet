@@ -10,6 +10,8 @@ A TOML v1.0.0 parser for Common Lisp.
 - **Portable** - Works across major Common Lisp implementations
 - **JSON-compatible output** - Parses TOML into hash-tables and vectors, making it easy to convert to JSON or work with existing JSON tools
 
+[Comparison with other Common Lisp TOML libraries](./TOML-LIBRARY-COMPARISON.md)
+
 ## Quick Start
 
 ```lisp
