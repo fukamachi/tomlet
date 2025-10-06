@@ -9,7 +9,7 @@ Comparison of TOML parser libraries for Common Lisp against the official TOML v1
 ## Test Results
 
 | Library | TOML Version | Commit | Tests Passed | Tests Failed | Pass Rate |
-|---------|--------------|--------|--------------|--------------|-----------|
+|---------|:------------:|:------:|:------------:|--------------:|----------:|
 | tomlet | v1.0.0 | 7886cf6 | 734/734 | 0 | 100% |
 | clop | v1.0.0 | c0c3fe7 | 730/734 | 4 | 99.5% |
 | parcom/toml | v1.0.0 | e29a293 | 594/733 | 139 | 81.0% |
