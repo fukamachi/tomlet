@@ -114,13 +114,18 @@
 
       ;; Strings
       ((char= ch #\")
-       (lex-string-token lexer line col))
+       (lex-string-token lexer line col context))
 
       ((char= ch #\')
-       (lex-literal-string-token lexer line col))
+       (lex-literal-string-token lexer line col context))
 
       ;; Bare keys and keywords (true, false, inf, nan)
-      ((or (alpha-char-p ch) (char= ch #\_))
+      ;; Only ASCII letters allowed in bare keys
+      ((or (and (characterp ch)
+                (let ((code (char-code ch)))
+                  (or (and (>= code 65) (<= code 90))   ; A-Z
+                      (and (>= code 97) (<= code 122))))) ; a-z
+           (char= ch #\_))
        (lex-bare-key-or-keyword lexer line col))
 
       ;; Numbers (including dates which start with digits)
@@ -266,7 +271,7 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
       (t (error 'types:toml-parse-error
                 :message (format nil "Invalid escape sequence: \\~C" ch))))))
 
-(defun lex-string-token (lexer line col)
+(defun lex-string-token (lexer line col context)
   "Lex a basic or multi-line basic string"
   (advance lexer) ;; Skip opening "
 
@@ -276,6 +281,12 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
                (char= (current-char lexer) #\")
                (peek-char-at lexer 1)
                (char= (peek-char-at lexer 1) #\"))
+      ;; Multi-line strings not allowed as keys
+      (when (eq context :key)
+        (error 'types:toml-parse-error
+               :message "Multi-line strings not allowed as keys"
+               :line line
+               :column col))
       (setf is-multiline t)
       (advance lexer) ;; Skip second "
       (advance lexer) ;; Skip third "
@@ -377,7 +388,7 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
                 :line line
                 :column col)))
 
-(defun lex-literal-string-token (lexer line col)
+(defun lex-literal-string-token (lexer line col context)
   "Lex a literal or multi-line literal string"
   (advance lexer) ;; Skip opening '
 
@@ -387,6 +398,12 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
                (char= (current-char lexer) #\')
                (peek-char-at lexer 1)
                (char= (peek-char-at lexer 1) #\'))
+      ;; Multi-line strings not allowed as keys
+      (when (eq context :key)
+        (error 'types:toml-parse-error
+               :message "Multi-line strings not allowed as keys"
+               :line line
+               :column col))
       (setf is-multiline t)
       (advance lexer) ;; Skip second '
       (advance lexer) ;; Skip third '
@@ -452,11 +469,19 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
 
 ;;; Bare key and keyword lexing
 
+(defun ascii-alphanumericp (char)
+  "Check if character is ASCII alphanumeric (a-z, A-Z, 0-9)"
+  (and (characterp char)
+       (let ((code (char-code char)))
+         (or (and (>= code 48) (<= code 57))   ; 0-9
+             (and (>= code 65) (<= code 90))   ; A-Z
+             (and (>= code 97) (<= code 122)))))) ; a-z
+
 (defun lex-bare-key-or-keyword (lexer line col)
   "Lex a bare key or keyword (true, false, inf, nan)"
   (let ((text (with-output-to-string (stream)
                 (loop while (and (not (at-end-p lexer))
-                                 (or (alphanumericp (current-char lexer))
+                                 (or (ascii-alphanumericp (current-char lexer))
                                      (char= (current-char lexer) #\_)
                                      (char= (current-char lexer) #\-)))
                       do (write-char (advance lexer) stream)))))
@@ -477,12 +502,12 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
 (defun lex-bare-key-conservative (lexer line col)
   "Lex a bare key without trying datetime/number parsing.
    Used in key context where '1.2' should be two keys '1' and '2', not a float.
-   Collects alphanumeric characters, digits, hyphens, and underscores."
+   Collects ASCII alphanumeric characters, digits, hyphens, and underscores."
   (make-token :type :bare-key
               :value (with-output-to-string (stream)
                        (loop while (and (not (at-end-p lexer))
                                         (let ((ch (current-char lexer)))
-                                          (or (alphanumericp ch)
+                                          (or (ascii-alphanumericp ch)
                                               (char= ch #\-)
                                               (char= ch #\_))))
                              do (write-char (advance lexer) stream)))
@@ -622,7 +647,9 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
    Returns (values cleaned-text is-float-p).
    Signals toml-parse-error if format is invalid."
 
-  (let ((is-float (or (find #\. text) (find #\e text) (find #\E text))))
+  ;; Detect if it's a float - but exclude hex/octal/binary integers which may contain e/E/b/B
+  (let ((is-float (and (not (ppcre:scan "^0[xXoObB]" text))
+                       (or (find #\. text) (find #\e text) (find #\E text)))))
 
     (cond
       ;; Float validation
@@ -635,39 +662,38 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
 
       ;; Integer validation
       (t
-       (cond
-         ;; Hex: 0x[0-9a-fA-F](_?[0-9a-fA-F])*
-         ((ppcre:scan "^0[xX]" text)
-          (when (ppcre:scan "[XOB]" text)  ; Capital prefix check
-            (error 'types:toml-parse-error
-                   :message (format nil "Invalid integer: capital prefix in ~A" text)))
-          (unless (ppcre:scan "^0x[0-9a-fA-F](_?[0-9a-fA-F])*$" text)
-            (error 'types:toml-parse-error
-                   :message (format nil "Invalid hex integer format: ~A" text))))
-
-         ;; Octal: 0o[0-7](_?[0-7])*
-         ((ppcre:scan "^0[oO]" text)
-          (when (ppcre:scan "[XOB]" text)
-            (error 'types:toml-parse-error
-                   :message (format nil "Invalid integer: capital prefix in ~A" text)))
-          (unless (ppcre:scan "^0o[0-7](_?[0-7])*$" text)
-            (error 'types:toml-parse-error
-                   :message (format nil "Invalid octal integer format: ~A" text))))
-
-         ;; Binary: 0b[01](_?[01])*
-         ((ppcre:scan "^0[bB]" text)
-          (when (ppcre:scan "[XOB]" text)
-            (error 'types:toml-parse-error
-                   :message (format nil "Invalid integer: capital prefix in ~A" text)))
-          (unless (ppcre:scan "^0b[01](_?[01])*$" text)
-            (error 'types:toml-parse-error
-                   :message (format nil "Invalid binary integer format: ~A" text))))
-
-         ;; Decimal: [+-]?(0|[1-9](_?[0-9])*)
-         (t
-          (unless (ppcre:scan "^[+-]?(0|[1-9](_?[0-9])*)$" text)
-            (error 'types:toml-parse-error
-                   :message (format nil "Invalid decimal integer format: ~A" text)))))
+       ;; Check for prefixed integers (hex/octal/binary)
+       (if (and (>= (length text) 2) (char= (char text 0) #\0))
+           (let ((prefix-char (char text 1)))
+             (case prefix-char
+               ;; Capital prefixes are invalid
+               ((#\X #\O #\B)
+                (error 'types:toml-parse-error
+                       :message (format nil "Invalid integer: capital prefix in ~A" text)))
+               ;; Hex: 0x[0-9a-fA-F](_?[0-9a-fA-F])*
+               (#\x
+                (unless (ppcre:scan "^0x[0-9a-fA-F](_?[0-9a-fA-F])*$" text)
+                  (error 'types:toml-parse-error
+                         :message (format nil "Invalid hex integer format: ~A" text))))
+               ;; Octal: 0o[0-7](_?[0-7])*
+               (#\o
+                (unless (ppcre:scan "^0o[0-7](_?[0-7])*$" text)
+                  (error 'types:toml-parse-error
+                         :message (format nil "Invalid octal integer format: ~A" text))))
+               ;; Binary: 0b[01](_?[01])*
+               (#\b
+                (unless (ppcre:scan "^0b[01](_?[01])*$" text)
+                  (error 'types:toml-parse-error
+                         :message (format nil "Invalid binary integer format: ~A" text))))
+               ;; Not a valid prefix - this is an error (e.g., 01, 09)
+               (otherwise
+                (error 'types:toml-parse-error
+                       :message (format nil "Invalid decimal integer format: ~A" text)))))
+           ;; Decimal validation for non-prefixed integers
+           ;; Decimal: [+-]?(0|[1-9](_?[0-9])*)
+           (unless (ppcre:scan "^[+-]?(0|[1-9](_?[0-9])*)$" text)
+             (error 'types:toml-parse-error
+                    :message (format nil "Invalid decimal integer format: ~A" text))))
 
        (values (ppcre:regex-replace-all "_" text "") nil)))))
 
@@ -755,12 +781,12 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
              (let ((full-text (with-output-to-string (stream)
                                 (write-string text stream)
                                 (loop while (and (not (at-end-p lexer))
-                                                 (or (alphanumericp (current-char lexer))
+                                                 (or (ascii-alphanumericp (current-char lexer))
                                                      (char= (current-char lexer) #\_)
                                                      (char= (current-char lexer) #\-)))
                                       do (write-char (advance lexer) stream)))))
                ;; Check if the full text looks like a valid bare key
-               (if (every (lambda (c) (or (alphanumericp c) (char= c #\-) (char= c #\_))) full-text)
+               (if (every (lambda (c) (or (ascii-alphanumericp c) (char= c #\-) (char= c #\_))) full-text)
                    (make-token :type :bare-key :value full-text :line line :column col)
                    (error 'types:toml-parse-error
                           :message (format nil "Invalid datetime: ~A (~A)" text e)
@@ -772,13 +798,17 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
          ;; Check if there are more bare-key characters after the collected text
          ;; If so, this is a bare key like "1key", not a number
          (if (and (not (at-end-p lexer))
-                  (or (alpha-char-p (current-char lexer))
-                      (char= (current-char lexer) #\_)))
+                  (let ((ch (current-char lexer)))
+                    (or (and (characterp ch)
+                             (let ((code (char-code ch)))
+                               (or (and (>= code 65) (<= code 90))   ; A-Z
+                                   (and (>= code 97) (<= code 122))))) ; a-z
+                        (char= ch #\_))))
              ;; Continue collecting as bare key
              (let ((full-text (with-output-to-string (stream)
                                 (write-string text stream)
                                 (loop while (and (not (at-end-p lexer))
-                                                 (or (alphanumericp (current-char lexer))
+                                                 (or (ascii-alphanumericp (current-char lexer))
                                                      (char= (current-char lexer) #\_)
                                                      (char= (current-char lexer) #\-)))
                                       do (write-char (advance lexer) stream)))))
@@ -800,7 +830,7 @@ Returns (values :continue nil) if quotes are part of content (caller should re-l
                    ((or (string= text "nan") (string= text "+nan") (string= text "-nan"))
                     (make-token :type :float :value float-utils:double-float-nan :line line :column col))
                    ;; If number parsing fails and text looks like a bare key, return as bare key
-                   ((every (lambda (c) (or (alphanumericp c) (char= c #\-) (char= c #\_) (char= c #\+))) text)
+                   ((every (lambda (c) (or (ascii-alphanumericp c) (char= c #\-) (char= c #\_) (char= c #\+))) text)
                     (make-token :type :bare-key :value text :line line :column col))
                    (t
                     (error 'types:toml-parse-error
