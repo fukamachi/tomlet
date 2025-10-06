@@ -38,4 +38,11 @@ jobs:
 
       - name: Run tests
         run: |
-          .qlot/bin/rove tomlet.asd
+          if [ "${{ matrix.lisp }}" = "ecl" ]; then
+            # Increase ECL stack sizes to avoid stack overflow
+            qlot exec ros -L ecl run -- --frame-stack 16384 --lisp-stack 262144 \
+              --eval "(asdf:load-system :tomlet/tests)" \
+              --eval "(or (rove:run :tomlet/tests) (uiop:quit -1))"
+          else
+            .qlot/bin/rove tomlet.asd
+          fi
