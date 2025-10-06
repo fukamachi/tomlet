@@ -128,6 +128,13 @@
 
 (defun run-valid-test (test-path)
   "Run a single valid test case."
+  #+abcl
+  ;; ABCL has char-code-limit of 65536 (16-bit, BMP only) and cannot
+  ;; represent Unicode codepoints beyond U+FFFF (e.g., emoji, supplementary planes)
+  (when (or (search "quoted-unicode" test-path)
+            (search "multibyte-escape" test-path))
+    (skip (format nil "~A: skipped on ABCL (16-bit char-code-limit, cannot represent >U+FFFF)" test-path))
+    (return-from run-valid-test))
   (let* ((toml-file (merge-pathnames test-path *test-dir*))
          (json-file (merge-pathnames (uiop:strcat (subseq test-path 0 (- (length test-path) 5)) ".json")
                                      *test-dir*))
@@ -140,12 +147,19 @@
 
 (defun run-invalid-test (test-path)
   "Run a single invalid test case - parser should signal an error."
+  #+abcl
+  ;; ABCL doesn't properly reject invalid UTF-8 during file reading,
+  ;; and also cannot handle high Unicode codepoints (char-code-limit 65536)
+  (when (or (search "bad-utf8" test-path)
+            (search "bad-codepoint" test-path))
+    (skip (format nil "~A: skipped on ABCL (lenient UTF-8 or 16-bit char limit)" test-path))
+    (return-from run-invalid-test))
   (let* ((toml-file (merge-pathnames test-path *test-dir*))
          (toml-content (handler-case
                            (uiop:read-file-string toml-file)
                          (error ()
                            ;; File read error (e.g., UTF-8 decode error) counts as invalid
-                           (ok t (format nil "~A: correctly rejected (file read error)" test-path))
+                           (pass (format nil "~A: correctly rejected (file read error)" test-path))
                            (return-from run-invalid-test)))))
     (ok (signals (tomlet:parse toml-content) 'tomlet:toml-error)
         (format nil "~A: signals toml-error" test-path))))
