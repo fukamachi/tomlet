@@ -134,70 +134,38 @@
          (toml-content (uiop:read-file-string toml-file))
          (expected-json (com.inuoe.jzon:parse (uiop:read-file-string json-file)))
          (expected (json-to-toml-expected expected-json)))
-    (handler-case
-        (let ((actual (tomlet:parse toml-content)))
-          (unless (compare-toml-structures expected actual)
-            (error "Mismatch: expected ~S, got ~S" expected actual)))
-      (error (e)
-        (error "Test ~A failed: ~A" test-path e)))))
+    (let ((actual (tomlet:parse toml-content)))
+      (ok (compare-toml-structures expected actual)
+          (format nil "~A: structures match" test-path)))))
 
 (defun run-invalid-test (test-path)
   "Run a single invalid test case - parser should signal an error."
-  (let ((toml-file (merge-pathnames test-path *test-dir*)))
-    (handler-case
-        (progn
-          (let ((toml-content (uiop:read-file-string toml-file)))
-            (tomlet:parse toml-content)
-            (error "Test ~A should have failed but didn't" test-path)))
-      (tomlet:toml-error () t)
-      (error (e)
-        ;; Some other error (including UTF-8 decoding errors) - counts as rejecting invalid input
-        (declare (ignore e))
-        t))))
+  (let* ((toml-file (merge-pathnames test-path *test-dir*))
+         (toml-content (handler-case
+                           (uiop:read-file-string toml-file)
+                         (error ()
+                           ;; File read error (e.g., UTF-8 decode error) counts as invalid
+                           (ok t (format nil "~A: correctly rejected (file read error)" test-path))
+                           (return-from run-invalid-test)))))
+    (ok (signals (tomlet:parse toml-content) 'tomlet:toml-error)
+        (format nil "~A: signals toml-error" test-path))))
 
 ;;; ===========================================================================
 ;;; Main Test Entry
 ;;; ===========================================================================
 
 (deftest official-toml-test-suite
-  (testing "Running official TOML 1.0.0 test suite"
+  (testing "TOML 1.0.0 valid test cases"
     (let* ((all-tests (read-test-file-list))
-           (valid-tests (remove-if-not (lambda (path) (uiop:string-prefix-p "valid/" path)) all-tests))
-           (invalid-tests (remove-if-not (lambda (path) (uiop:string-prefix-p "invalid/" path)) all-tests))
-           (passed 0)
-           (failed 0)
-           (errors 0))
-
-      ;; Run valid tests
-      (format t "~%Running ~D valid tests...~%" (length valid-tests))
+           (valid-tests (remove-if-not (lambda (path) (uiop:string-prefix-p "valid/" path)) all-tests)))
       (dolist (test-path valid-tests)
-        (handler-case
-            (progn
-              (run-valid-test test-path)
-              (incf passed))
-          (error (e)
-            (incf failed)
-            (format t "FAIL (valid): ~A~%  ~A~%" test-path e))))
+        (run-valid-test test-path))))
 
-      ;; Run invalid tests
-      (format t "~%Running ~D invalid tests...~%" (length invalid-tests))
+  (testing "TOML 1.0.0 invalid test cases"
+    (let* ((all-tests (read-test-file-list))
+           (invalid-tests (remove-if-not (lambda (path) (uiop:string-prefix-p "invalid/" path)) all-tests)))
       (dolist (test-path invalid-tests)
-        (handler-case
-            (progn
-              (run-invalid-test test-path)
-              (incf passed))
-          (error (e)
-            (incf errors)
-            (format t "FAIL (invalid): ~A~%  ~A~%" test-path e))))
-
-      (format t "~%Results: ~D passed, ~D failed, ~D errors~%" passed failed errors)
-      (format t "Total: ~D/~D (~,1F%)~%"
-              passed
-              (+ passed failed errors)
-              (* 100.0 (/ passed (+ passed failed errors))))
-
-      ;; For now, we just report - don't fail the test
-      (ok t "Test suite completed"))))
+        (run-invalid-test test-path)))))
 
 ;;; ===========================================================================
 ;;; Individual Unit Tests (kept for debugging specific features)
