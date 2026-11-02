@@ -19,7 +19,8 @@
   #+lispworks (progn
                 (let ((bits (byte 64 0)))
                   (sys:make-typed-aref-vector 8)))
-  #-(or sbcl ccl ecl clasp abcl allegro lispworks)
+  #+dotcl dotcl:double-float-positive-infinity
+  #-(or sbcl ccl ecl clasp abcl allegro lispworks dotcl)
   (error "Positive infinity not supported on this implementation")
   "Positive infinity as a double-float")
 
@@ -31,7 +32,8 @@
   #+abcl ext:double-float-negative-infinity
   #+allegro excl:*negative-infinity-double*
   #+lispworks (- double-float-positive-infinity)
-  #-(or sbcl ccl ecl clasp abcl allegro lispworks)
+  #+dotcl dotcl:double-float-negative-infinity
+  #-(or sbcl ccl ecl clasp abcl allegro lispworks dotcl)
   (error "Negative infinity not supported on this implementation")
   "Negative infinity as a double-float")
 
@@ -52,7 +54,9 @@
   excl::*nan-double*
   #+lispworks
   (sys:make-typed-aref-vector 8)
-  #-(or sbcl ccl ecl clasp abcl allegro lispworks)
+  #+dotcl
+  dotcl:double-float-nan
+  #-(or sbcl ccl ecl clasp abcl allegro lispworks dotcl)
   (error "NaN not supported on this implementation")
   "Not-a-Number as a double-float")
 
